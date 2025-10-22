@@ -1,0 +1,74 @@
+name: ProjectAddons
+author: Simplicitee
+api-version: 1.21
+version: 1.4.0
+main: me.simplicitee.project.addons.ProjectAddons
+depend: [ProjectKorra]
+folia-supported: true
+website: https://github.com/Simplicitee/ProjectAddons
+description: A comprehensive addon for ProjectKorra with new abilities, combos, and utilities
+commands:
+  projectaddons:
+    aliases: [pa]
+    usage: /<command>
+permissions:
+  projectaddons.player:
+    default: true
+    children:
+      bending.air.sound: true
+      bending.ability.firedisc: true
+      bending.ability.flamebreath: true
+      bending.ability.plantarmor: true
+      bending.ability.razorleaf: true
+      bending.ability.earthkick: true
+      bending.ability.magmaslap: true
+      bending.ability.lavasurge: true
+      bending.ability.quickweld: true
+      bending.ability.shrapnel: true
+      bending.ability.explode: true
+      bending.ability.combustbeam: true
+      bending.ability.jab: true
+      bending.ability.chiblockjab: true
+      bending.ability.weakeningjab: true
+      bending.ability.ninjastance: true
+      bending.ability.flyingkick: true
+      bending.ability.leafstorm: true
+      bending.ability.galegust: true
+      bending.ability.zephyr: true
+      bending.ability.dig: true
+      bending.ability.dodging: true
+      bending.ability.accretion: true
+      bending.ability.crumble: true
+      bending.ability.arcspark: true
+      bending.ability.incinerate: true
+      bending.ability.jets: true
+      bending.ability.turbojet: true
+      bending.ability.bulwark: true
+      bending.ability.electrify: true
+      bending.ability.vocalmimicry: true
+      bending.ability.soundwave: true
+      bending.ability.deafen: true
+      bending.ability.landlaunch: true
+      bending.ability.hydrojet: true
+      bending.ability.chargebolt: true
+      bending.ability.mistshards: true
+      bending.ability.camouflage: true
+      bending.ability.rockslide: true
+      bending.ability.tailwind: true
+  bending.ability.plantarmor:
+    children:
+      bending.ability.plantarmor.vinewhip: true
+      bending.ability.plantarmor.razorleaf: true
+      bending.ability.plantarmor.leafshield: true
+      bending.ability.plantarmor.tangle: true
+      bending.ability.plantarmor.leap: true
+      bending.ability.plantarmor.grapple: true
+      bending.ability.plantarmor.leafdome: true
+      bending.ability.plantarmor.regenerate: true
+      bending.ability.plantarmor.disperse: true
+  bending.ability.energybeam:
+    default: op
+  bending.fire.bluefire:
+    default: op
+  bending.offhandswap:
+    default: true
