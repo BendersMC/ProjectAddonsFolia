@@ -1,7 +1,8 @@
 package me.simplicitee.project.addons.util;
 
 import com.projectkorra.projectkorra.GeneralMethods;
-import com.projectkorra.projectkorra.ProjectKorra;
+import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
+import me.simplicitee.project.addons.ProjectAddons;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -18,38 +19,23 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentSkipListSet;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.ScheduledThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 
 public class LightManager {
 
-    // Our LightManager instance
     private static final LightManager INSTANCE = new LightManager();
-    // If the MC version is pre-LIGHT (< 1.17) this class basically does nothing
-    private final boolean modern;
-    // Striped Lock set at number of processors * 2
-    private final Object[] locks;
-    // A map containing all active lights
-    private final ConcurrentHashMap<Location, ConcurrentSkipListSet<LightData>> lightMap = new ConcurrentHashMap<>();
-    // A queue for handling individual reversions
-    private final ConcurrentLinkedQueue<BlockChange> blockChangeQueue = new ConcurrentLinkedQueue<>();
+    private static final List<UUID> AUTO_NEARBY_OBSERVERS = List.of();
 
-    // Default LIGHT BlockData
+    private final boolean modern;
+    private final Object[] locks;
+    private final ConcurrentHashMap<LightKey, ConcurrentSkipListSet<LightData>> lightMap = new ConcurrentHashMap<>();
     private final Map<Integer, BlockData> lightDataMap = new HashMap<>();
     private final Map<Integer, BlockData> waterloggedLightDataMap = new HashMap<>();
 
-    // Scheduler with threads equal to the number of available processors, this handles reverting expired lights
-    private ScheduledThreadPoolExecutor scheduler = new ScheduledThreadPoolExecutor(Runtime.getRuntime().availableProcessors());
+    private volatile boolean acceptingLights = true;
 
-    /**
-     * Creates a new LightManager instance. Initializes default BlockData for LIGHT and waterlogged LIGHT,
-     * sets up locks based on the number of available processors * 2, and schedules the reverter task to run periodically
-     * using a ScheduledThreadPoolExecutor.
-     */
     private LightManager() {
         modern = GeneralMethods.getMCVersion() >= 1170;
 
@@ -61,45 +47,9 @@ public class LightManager {
 
         if (modern) {
             precomputeLightData();
-            startLightReverter();
         }
     }
 
-    /**
-     * Retrieves the current time and iterates over all light data in the light map. If the current time is greater
-     * than or equal to the expiry time of a light data, it fades the light out and removes the light data from the map.
-     * This is running periodically, or every 50ms, via the scheduled thread pool executor.
-     */
-    private void revertExpiredLights() {
-        long currentTime = System.currentTimeMillis();
-        List<LightData> lightsToRevert = new ArrayList<>();
-
-        lightMap.forEach((location, lightDataSet) -> {
-            Iterator<LightData> iterator = lightDataSet.iterator();
-            while (iterator.hasNext()) {
-                LightData lightData = iterator.next();
-                if (currentTime >= lightData.expiryTime) {
-                    lightsToRevert.add(lightData);
-                    iterator.remove();
-                }
-            }
-            if (lightDataSet.isEmpty()) {
-                lightMap.remove(location);
-            }
-        });
-
-        for (LightData lightData : lightsToRevert) {
-            fadeLight(lightData);
-        }
-    }
-
-    /**
-     * Precomputes light data for levels 1 through 15 by creating a BlockData object for each level
-     * with the "LIGHT" material and setting the level using the Levelled interface. It also
-     * creates a waterlogged version of each light data object using the Waterlogged interface.
-     * The resulting objects are stored in the lightDataMap and waterloggedLightDataMap maps
-     * respectively. This cuts down on computation time constantly manipulating BlockData.
-     */
     private void precomputeLightData() {
         BlockData lightData = Bukkit.createBlockData(Material.valueOf("LIGHT"));
 
@@ -113,111 +63,140 @@ public class LightManager {
         }
     }
 
-    /**
-     * Starts the light reverter task by scheduling it to run at a fixed rate of 50 milliseconds, or 1 tick.
-     * If the scheduler is already shut down, a new ScheduledThreadPoolExecutor is created with the number of available processors.
-     */
-    private void startLightReverter() {
-        if (scheduler.isShutdown()) {
-            scheduler = new ScheduledThreadPoolExecutor(Runtime.getRuntime().availableProcessors());
+    private void addLight(Location location, int brightness, long expiryMs, Collection<? extends Player> observers) {
+        if (!modern || !acceptingLights) {
+            return;
         }
 
-        scheduler.scheduleAtFixedRate(this::revertExpiredLights, 0, 50, TimeUnit.MILLISECONDS);
-        scheduler.scheduleAtFixedRate(this::processBlockChanges, 0, 50, TimeUnit.MILLISECONDS);
+        Location scheduleAt = location.clone();
+        boolean autoNearby = observers == null;
+        List<UUID> observerIds = autoNearby ? AUTO_NEARBY_OBSERVERS : snapshotObserverIds(observers);
+
+        Bukkit.getRegionScheduler().execute(plugin(), scheduleAt, () ->
+                addLightOnRegionThread(scheduleAt, brightness, expiryMs, observerIds, autoNearby));
     }
 
-    /**
-     * Fades out a light by decrementing its brightness by 1. The light will stop fading when its brightness
-     * reaches 0. The fade process is scheduled to run every 50 milliseconds, or 1 tick.
-     *
-     * @param lightData the LightData object containing the light's brightness, location, UUID, and ephemeral flag
-     */
-    private void fadeLight(LightData lightData) {
-        int brightness = lightData.brightness;
-
-        class TaskHolder {
-            ScheduledFuture<?> future;
+    private void addLightOnRegionThread(Location location, int brightness, long expiryMs,
+            List<UUID> observerIds, boolean autoNearby) {
+        if (!acceptingLights) {
+            return;
         }
-        TaskHolder taskHolder = new TaskHolder();
 
-        Runnable task = new Runnable() {
-            private int currentBrightness = brightness;
+        Location blockLocation = location.getBlock().getLocation();
+        long expiryTime = System.currentTimeMillis() + expiryMs;
 
-            @Override
-            public void run() {
-                currentBrightness--;
-                if (currentBrightness > 0) {
-                    sendLightChange(lightData.location, currentBrightness, lightData.observers);
-                } else {
-                    revertLight(lightData);
-                    taskHolder.future.cancel(false);
-                }
+        if (blockLocation.getBlock().getLightLevel() >= brightness
+                || (!blockLocation.getBlock().isEmpty() && blockLocation.getBlock().getType() != Material.WATER)) {
+            return;
+        }
+
+        LightData newLightData = new LightData(blockLocation.clone(), brightness, observerIds, autoNearby, expiryTime);
+        LightKey key = LightKey.from(blockLocation);
+
+        LightData previous;
+        Object lock = getLockForKey(key);
+        synchronized (lock) {
+            ConcurrentSkipListSet<LightData> existingSet =
+                    lightMap.computeIfAbsent(key, ignored -> new ConcurrentSkipListSet<>());
+            previous = findMatchingLight(existingSet, newLightData);
+            if (previous != null) {
+                cancelTasks(previous);
+                existingSet.remove(previous);
             }
-        };
+            existingSet.add(newLightData);
+        }
 
-        taskHolder.future = scheduler.scheduleAtFixedRate(task, 0, 50, TimeUnit.MILLISECONDS);
+        sendLightChangeOnRegion(blockLocation, brightness, observerIds, autoNearby);
+        scheduleExpiry(newLightData);
     }
 
-    /**
-     * Sends a block change to the specified location. Brightness of 0 indicates that the light should be reverted.
-     *
-     * @param location   the location where the light change is to be sent
-     * @param brightness the brightness level of the light
-     * @param observers  the list of players who can see the light
-     */
-    private void sendLightChange(Location location, int brightness, Collection<? extends Player> observers) {
-        BlockData lightData = brightness > 0 ? getLightData(location, brightness) : getCurrentBlockData(location);
-        World targetWorld = location.getWorld();
-        double maxDistanceSquared = Math.pow(Bukkit.getServer().getViewDistance() * 16, 2);
+    private void scheduleExpiry(LightData lightData) {
+        long delayMs = lightData.expiryTime - System.currentTimeMillis();
+        long delayTicks = Math.max(1L, (delayMs + 49L) / 50L);
 
-        observers.stream()
-                .filter(player -> player != null && player.isOnline() && !player.isDead() && player.getWorld().equals(targetWorld))
-                .filter(player -> player.getLocation().distanceSquared(location) <= maxDistanceSquared)
-                .forEach(player -> blockChangeQueue.add(new BlockChange(player, location, lightData)));
+        ScheduledTask task = Bukkit.getRegionScheduler().runDelayed(plugin(), lightData.location, scheduledTask -> {
+            if (!acceptingLights) {
+                return;
+            }
+            if (!removeLightData(lightData)) {
+                return;
+            }
+            beginFade(lightData);
+        }, delayTicks);
+        lightData.expiryTask = task;
     }
 
-    private void processBlockChanges() {
-        BlockChange blockChange;
-        while ((blockChange = blockChangeQueue.poll()) != null) {
-            Player player = blockChange.getPlayer();
-            BlockChange finalBlockChange = blockChange;
-            Bukkit.getScheduler().runTaskAsynchronously(ProjectKorra.plugin, () -> {
-                player.sendBlockChange(finalBlockChange.getLocation(), finalBlockChange.getBlockData());
+    private void beginFade(LightData lightData) {
+        final int[] currentBrightness = {lightData.brightness};
+        ScheduledTask fadeTask = Bukkit.getRegionScheduler().runAtFixedRate(plugin(), lightData.location, task -> {
+            currentBrightness[0]--;
+            if (currentBrightness[0] > 0) {
+                sendLightChangeOnRegion(lightData.location, currentBrightness[0], lightData.observerIds, lightData.autoNearby);
+            } else {
+                task.cancel();
+                sendLightChangeOnRegion(lightData.location, 0, lightData.observerIds, lightData.autoNearby);
+            }
+        }, 1L, 1L);
+        lightData.fadeTask = fadeTask;
+    }
+
+    private void sendLightChangeOnRegion(Location location, int brightness, List<UUID> observerIds, boolean autoNearby) {
+        BlockData blockData = brightness > 0 ? getLightData(location, brightness) : getCurrentBlockData(location);
+        List<Player> targets = resolveObservers(location, observerIds, autoNearby);
+        Location sendLocation = location.clone();
+        BlockData sendData = blockData;
+
+        for (Player player : targets) {
+            UUID playerId = player.getUniqueId();
+            SchedulerUtil.runForPlayer(plugin(), player, () -> {
+                Player online = Bukkit.getPlayer(playerId);
+                if (online != null && online.isOnline() && !online.isDead()) {
+                    online.sendBlockChange(sendLocation, sendData);
+                }
             });
         }
     }
 
     /**
-     * Helper method to revert a light at the specified location by calling sendLightChange with a brightness of 0.
-     *
-     * @param lightData the LightData object containing the location, brightness, UUID, and ephemeral flag of the light to be reverted
+     * When callers do not pass explicit observers, discover viewers with a bounded regional lookup
+     * on the owning region thread instead of scanning all online players.
      */
-    private void revertLight(LightData lightData) {
-        sendLightChange(lightData.location, 0, lightData.observers);
+    private List<Player> resolveObservers(Location location, List<UUID> observerIds, boolean autoNearby) {
+        World world = location.getWorld();
+        if (world == null) {
+            return List.of();
+        }
+
+        double viewRadius = Bukkit.getServer().getViewDistance() * 16.0;
+
+        if (autoNearby) {
+            return new ArrayList<>(world.getNearbyPlayers(location, viewRadius, 1.0));
+        }
+
+        List<Player> targets = new ArrayList<>(observerIds.size());
+        for (UUID playerId : observerIds) {
+            Player player = Bukkit.getPlayer(playerId);
+            if (player == null || !player.isOnline() || player.isDead()) {
+                continue;
+            }
+            if (!player.getWorld().equals(world)) {
+                continue;
+            }
+            if (player.getLocation().distanceSquared(location) > viewRadius * viewRadius) {
+                continue;
+            }
+            targets.add(player);
+        }
+        return targets;
     }
 
-    /**
-     * Returns the BlockData as light for the given Location, based on whether the block is water or air.
-     *
-     * @param location   the Location to get the BlockData for
-     * @param lightLevel the light level to set for the BlockData
-     * @return the BlockData for the given Location
-     */
     private BlockData getLightData(Location location, int lightLevel) {
         if (location.getBlock().getType() == Material.WATER) {
             return waterloggedLightDataMap.get(lightLevel);
-        } else {
-            return lightDataMap.get(lightLevel);
         }
+        return lightDataMap.get(lightLevel);
     }
 
-    /**
-     * Returns the BlockData for the given Location, based on the current state of the block.
-     * Used to revert lights that have expired.
-     *
-     * @param location the Location to get the BlockData for
-     * @return the BlockData for the given Location
-     */
     private BlockData getCurrentBlockData(Location location) {
         return location.getBlock().getBlockData();
     }
@@ -226,151 +205,146 @@ public class LightManager {
         return INSTANCE;
     }
 
-    /**
-     * Creates a new LightBuilder instance with the given location.
-     *
-     * @param location the location where the light will be created
-     * @return a new LightBuilder instance
-     */
     public static LightBuilder createLight(Location location) {
         return new LightBuilder(location);
     }
 
     /**
-     * Adds a light at the specified location with the given brightness and expiry.
-     * Visible for the specified observers.
-     * Subsequent calls to a location with an active light extends the expiration time for the relevant observers.
-     *
-     * @param location   the location where the light should be added
-     * @param brightness the brightness of the light, 1-15
-     * @param expiry     the time in milliseconds before the light fades out
-     * @param observers  the list of players who can see the light
-     */
-    private void addLight(Location location, int brightness, long expiry, Collection<? extends Player> observers) {
-        if (!modern) return;
-
-        location = location.getBlock().getLocation();
-        long expiryTime = System.currentTimeMillis() + expiry;
-
-        if (location.getBlock().getLightLevel() >= brightness ||
-                (!location.getBlock().isEmpty() && !location.getBlock().getType().equals(Material.WATER))) return;
-
-        LightData newLightData = new LightData(location, brightness, observers, expiryTime);
-
-        Object lock = getLockForLocation(location);
-        synchronized (lock) {
-            ConcurrentSkipListSet<LightData> existingSet = lightMap.computeIfAbsent(location, loc -> new ConcurrentSkipListSet<>());
-            existingSet.removeIf(lightData -> lightData.observers.equals(observers));
-            existingSet.add(newLightData);
-        }
-
-        sendLightChange(location, brightness, observers);
-    }
-
-    /**
-     * Returns the lock object associated with the given location. The lock object
-     * is used to synchronize access to the light data for the location. The
-     * function calculates the hash code of the location and uses it to determine
-     * the index of the lock object in the locks array. The locks array is
-     * initialized with a fixed number of objects based on the number of available
-     * processors * 2.
-     *
-     * @param location the location for which the lock object is requested
-     * @return the lock object associated with the location
-     */
-    private Object getLockForLocation(Location location) {
-        return locks[(location.hashCode() & 0x7FFFFFFF) % locks.length];
-    }
-
-    /**
-     * Reverts all active lights immediately with no fade-out, then restarts the revert scheduler.
-     * This does not normally need to be used as it's already called when ProjectKorra is reloaded.
+     * Reverts all active lights immediately with no fade-out and cancels scheduled light tasks.
+     * Called when ProjectKorra reloads configuration.
      */
     public void restart() {
-        if (!modern) return;
-
-        lightMap.values().forEach(set -> set.forEach(this::revertLight));
-        lightMap.clear();
-
-        scheduler.shutdown();
-
-        try {
-            if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
-                scheduler.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            scheduler.shutdownNow();
-            Thread.currentThread().interrupt();
+        if (!modern) {
+            return;
         }
 
-        startLightReverter();
+        acceptingLights = false;
+
+        List<LightData> lightsToRevert = new ArrayList<>();
+        for (ConcurrentSkipListSet<LightData> set : lightMap.values()) {
+            for (LightData lightData : set) {
+                cancelTasks(lightData);
+                lightsToRevert.add(lightData);
+            }
+        }
+        lightMap.clear();
+
+        for (LightData lightData : lightsToRevert) {
+            Location location = lightData.location.clone();
+            List<UUID> observerIds = lightData.observerIds;
+            boolean autoNearby = lightData.autoNearby;
+            Bukkit.getRegionScheduler().execute(plugin(), location, () ->
+                    sendLightChangeOnRegion(location, 0, observerIds, autoNearby));
+        }
+
+        acceptingLights = true;
     }
 
-    private static class LightData implements Comparable<LightData> {
+    private boolean removeLightData(LightData lightData) {
+        LightKey key = LightKey.from(lightData.location);
+        Object lock = getLockForKey(key);
+        synchronized (lock) {
+            ConcurrentSkipListSet<LightData> set = lightMap.get(key);
+            if (set == null) {
+                return false;
+            }
+            boolean removed = set.remove(lightData);
+            if (set.isEmpty()) {
+                lightMap.remove(key, set);
+            }
+            return removed;
+        }
+    }
+
+    private static LightData findMatchingLight(ConcurrentSkipListSet<LightData> set, LightData candidate) {
+        for (LightData existing : set) {
+            if (existing.sameObserverSet(candidate)) {
+                return existing;
+            }
+        }
+        return null;
+    }
+
+    private static void cancelTasks(LightData lightData) {
+        ScheduledTask expiryTask = lightData.expiryTask;
+        if (expiryTask != null && !expiryTask.isCancelled()) {
+            expiryTask.cancel();
+        }
+        ScheduledTask fadeTask = lightData.fadeTask;
+        if (fadeTask != null && !fadeTask.isCancelled()) {
+            fadeTask.cancel();
+        }
+    }
+
+    private static List<UUID> snapshotObserverIds(Collection<? extends Player> observers) {
+        List<UUID> ids = new ArrayList<>(observers.size());
+        for (Player player : observers) {
+            if (player != null) {
+                ids.add(player.getUniqueId());
+            }
+        }
+        return List.copyOf(ids);
+    }
+
+    private Object getLockForKey(LightKey key) {
+        return locks[(key.hashCode() & 0x7FFFFFFF) % locks.length];
+    }
+
+    private static ProjectAddons plugin() {
+        return ProjectAddons.instance;
+    }
+
+    private record LightKey(UUID worldId, int x, int y, int z) {
+        static LightKey from(Location location) {
+            Location block = location.getBlock().getLocation();
+            World world = block.getWorld();
+            UUID worldUuid = world != null ? world.getUID() : new UUID(0L, 0L);
+            return new LightKey(worldUuid, block.getBlockX(), block.getBlockY(), block.getBlockZ());
+        }
+    }
+
+    private static final class LightData implements Comparable<LightData> {
         private final Location location;
         private final int brightness;
-        private final Collection<? extends Player> observers;
+        private final List<UUID> observerIds;
+        private final boolean autoNearby;
         private final long expiryTime;
+        private volatile ScheduledTask expiryTask;
+        private volatile ScheduledTask fadeTask;
 
-        private LightData(Location location, int brightness, Collection<? extends Player> observers, long expiryTime) {
+        private LightData(Location location, int brightness, List<UUID> observerIds, boolean autoNearby, long expiryTime) {
             this.location = location;
             this.brightness = brightness;
-            this.observers = observers;
+            this.observerIds = observerIds;
+            this.autoNearby = autoNearby;
             this.expiryTime = expiryTime;
         }
 
-        /**
-         * Calculates the hash code for this object. The hash code is based on the
-         * values of the location, brightness, observers, and expiryTime fields.
-         *
-         * @return the hash code of this object
-         */
+        private boolean sameObserverSet(LightData other) {
+            return autoNearby == other.autoNearby && observerIds.equals(other.observerIds);
+        }
+
         @Override
         public int hashCode() {
-            return Objects.hash(location, brightness, observers, expiryTime);
+            return Objects.hash(location, brightness, observerIds, autoNearby, expiryTime);
         }
 
-        /**
-         * Checks if this LightData object is equal to another object. Two LightData objects are considered
-         * equal if they have the same brightness, expiryTime, location, and observers.
-         *
-         * @param obj the object to compare this LightData object to
-         * @return true if the objects are equal, false otherwise
-         */
         @Override
         public boolean equals(Object obj) {
-            if (this == obj) return true;
-            if (obj == null || getClass() != obj.getClass()) return false;
+            if (this == obj) {
+                return true;
+            }
+            if (obj == null || getClass() != obj.getClass()) {
+                return false;
+            }
             LightData that = (LightData) obj;
-            return brightness == that.brightness &&
-                    expiryTime == that.expiryTime &&
-                    location.equals(that.location) &&
-                    observers.equals(that.observers);
+            return brightness == that.brightness
+                    && expiryTime == that.expiryTime
+                    && autoNearby == that.autoNearby
+                    && location.equals(that.location)
+                    && observerIds.equals(that.observerIds);
         }
 
-        /**
-         * Returns a string representation of the LightData object.
-         *
-         * @return a string in the format "LightData{location=..., brightness=..., observers=..., expiryTime=...}"
-         */
-        @Override
-        public String toString() {
-            return "LightData{" +
-                    "location=" + location +
-                    ", brightness=" + brightness +
-                    ", observers=" + observers +
-                    ", expiryTime=" + expiryTime +
-                    '}';
-        }
-
-        /**
-         * Compares this LightData object with another LightData object based on their expiryTime.
-         *
-         * @param other the LightData object to compare to
-         * @return a negative integer, zero, or a positive integer as this object's
-         * expiryTime is less than, equal to, or greater than the other object's
-         * expiryTime.
-         */
         @Override
         public int compareTo(LightData other) {
             return Long.compare(this.expiryTime, other.expiryTime);
@@ -379,76 +353,34 @@ public class LightManager {
 
     public static class LightBuilder {
         private final Location location;
-        private int brightness = 15; // default brightness
-        private long timeUntilFade = 50; // default expiry time in ms
-        private Collection<? extends Player> observers = Bukkit.getOnlinePlayers(); // default to all players
+        private int brightness = 15;
+        private long timeUntilFade = 50;
+        private Collection<? extends Player> observers;
 
         public LightBuilder(Location location) {
             this.location = location;
         }
 
-        /**
-         * Sets the brightness value, 1-15, for this light.
-         *
-         * @param brightness the new brightness value, a value 1-15.
-         * @return the current instance of the LightBuilder
-         */
         public LightBuilder brightness(int brightness) {
             this.brightness = Math.max(1, Math.min(15, brightness));
             return this;
         }
 
-        /**
-         * Sets the expiry time in ms for this light, defaults to 50ms.
-         *
-         * @param expiry the new expiry time in milliseconds
-         * @return the current instance of the LightBuilder
-         */
         public LightBuilder timeUntilFadeout(long expiry) {
             this.timeUntilFade = expiry;
             return this;
         }
 
         /**
-         * Sets the collection of observers for this light, defaults to everybody.
-         *
-         * @param observers the collection of observers to set
-         * @return the current instance of the LightBuilder
+         * Sets explicit observers. When omitted, nearby players are resolved on the light's region thread.
          */
         public LightBuilder observers(Collection<? extends Player> observers) {
             this.observers = observers;
             return this;
         }
 
-        /**
-         * Emits this light at the specified location with the given brightness, expiry time, and observers.
-         */
         public void emit() {
             LightManager.get().addLight(location, brightness, timeUntilFade, observers);
-        }
-    }
-
-    private static class BlockChange {
-        private final Player player;
-        private final Location location;
-        private final BlockData blockData;
-
-        public BlockChange(Player player, Location location, BlockData blockData) {
-            this.player = player;
-            this.location = location;
-            this.blockData = blockData;
-        }
-
-        public Player getPlayer() {
-            return player;
-        }
-
-        public Location getLocation() {
-            return location;
-        }
-
-        public BlockData getBlockData() {
-            return blockData;
         }
     }
 }
