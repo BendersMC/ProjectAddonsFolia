@@ -22,6 +22,8 @@ import java.util.Map;
 
 public class SonicWave extends SoundAbility implements AddonAbility {
 
+	private static final double WAVE_AUDIENCE_RADIUS = 16.0;
+
 	@Attribute(Attribute.WIDTH)
 	private double width;
 	@Attribute(Attribute.DURATION)
@@ -71,14 +73,18 @@ public class SonicWave extends SoundAbility implements AddonAbility {
 					continue;
 				}	
 				
-				for (Player p : player.getWorld().getPlayers()) {
-					BendingPlayer bp = BendingPlayer.getBendingPlayer(p);
+				for (Entity entity : GeneralMethods.getEntitiesAroundPoint(loc, WAVE_AUDIENCE_RADIUS)) {
+					if (!(entity instanceof Player nearbyPlayer)) {
+						continue;
+					}
+
+					BendingPlayer bp = BendingPlayer.getBendingPlayer(nearbyPlayer);
 					if (bp != null && bp.hasElement(ProjectAddons.instance.getSoundElement())) {
 						ProjectAddons.instance.getParticleAdapter().displayColoredParticles(new HexColor("#000000"), loc, 1, 0, 0, 0, 0.0, 150);
 					}
-					p.playNote(loc, Instrument.FLUTE, Note.sharp(2, Tone.F));
+					nearbyPlayer.playNote(loc, Instrument.FLUTE, Note.sharp(2, Tone.F));
 				}
-				
+
 				for (Entity e : GeneralMethods.getEntitiesAroundPoint(loc, 0.8)) {
 					if (e instanceof LivingEntity && e.getEntityId() != player.getEntityId()) {
 						((LivingEntity) e).addPotionEffect(ProjectAddons.instance.getPotionEffectAdapter().getNauseaEffect(duration, amp));
