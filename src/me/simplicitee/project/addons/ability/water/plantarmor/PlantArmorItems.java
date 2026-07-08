@@ -45,6 +45,13 @@ public final class PlantArmorItems {
 		return marker != null && marker == PLANT_ARMOR_MARKER;
 	}
 
+	public static boolean isPlantArmorForSession(Plugin plugin, ItemStack item, String sessionId) {
+		if (sessionId == null || !isPlantArmorItem(plugin, item)) {
+			return false;
+		}
+		return sessionId.equals(getSessionId(plugin, item));
+	}
+
 	public static String getSessionId(Plugin plugin, ItemStack item) {
 		if (item == null || !item.hasItemMeta()) {
 			return null;

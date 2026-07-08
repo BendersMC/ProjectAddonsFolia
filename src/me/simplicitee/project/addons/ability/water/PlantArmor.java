@@ -14,10 +14,10 @@ import com.projectkorra.projectkorra.util.ActionBar;
 import com.projectkorra.projectkorra.util.ClickType;
 import com.projectkorra.projectkorra.util.DamageHandler;
 import com.projectkorra.projectkorra.util.MovementHandler;
-import com.projectkorra.projectkorra.util.TempArmor;
 import com.projectkorra.projectkorra.util.TempBlock;
 import me.simplicitee.project.addons.ProjectAddons;
 import me.simplicitee.project.addons.Util;
+import me.simplicitee.project.addons.ability.water.plantarmor.RestoreReason;
 import me.simplicitee.project.addons.util.versionadapter.PotionEffectAdapter;
 import net.md_5.bungee.api.ChatColor;
 import org.bukkit.Bukkit;
@@ -68,7 +68,8 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 	private ArmorAbility active;
 	private BossBar bar;
 	private ItemStack[] armors = new ItemStack[4];
-	private TempArmor armor;
+	private String plantArmorSessionId;
+	private RestoreReason restoreReason = RestoreReason.ABILITY_END;
 	private World origin;
 	private Location current;
 	private Vector direction;
@@ -152,7 +153,6 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 			this.swim = ProjectAddons.instance.getConfig().getInt("Abilities.Water.PlantArmor.Boost.Swim") - 1;
 			this.speed = ProjectAddons.instance.getConfig().getInt("Abilities.Water.PlantArmor.Boost.Speed") - 1;
 			this.jump = ProjectAddons.instance.getConfig().getInt("Abilities.Water.PlantArmor.Boost.Jump") - 1;
-			this.armor = null;
 			
 			armors[0] = leafLeather(Material.LEATHER_BOOTS);
 			armors[1] = leafLeather(Material.LEATHER_LEGGINGS);
@@ -212,21 +212,25 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 	@Override
 	public void progress() {
 		if (!bPlayer.canBendIgnoreBinds(this)) {
+			restoreReason = RestoreReason.CANCELLED;
 			remove();
 			return;
 		}
 		
 		if (!player.getWorld().equals(origin)) {
+			restoreReason = RestoreReason.WORLD_CHANGE;
 			remove();
 			return;
 		}
 		
 		if (durability <= 0) {
+			restoreReason = RestoreReason.DURABILITY;
 			remove();
 			return;
 		}
 		
 		if (duration > 0 && System.currentTimeMillis() >= this.getStartTime() + duration) {
+			restoreReason = RestoreReason.DURATION;
 			remove();
 			return;
 		}
@@ -297,12 +301,15 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 	
 	@Override
 	public void remove() {
+		if (plantArmorSessionId != null) {
+			ProjectAddons.instance.getPlantArmorService().restore(player, restoreReason, plantArmorSessionId);
+			plantArmorSessionId = null;
+		}
+		restoreReason = RestoreReason.ABILITY_END;
+
 		super.remove();
 		bPlayer.addCooldown(this);
 		MultiAbilityManager.unbindMultiAbility(player);
-		if (TempArmor.getTempArmorList(this.player).contains(this.armor)) {
-			this.armor.revert();
-		}
 		
 		sources.forEach((tb) -> tb.revertBlock());
 		shield.forEach((tb) -> tb.revertBlock());
@@ -315,14 +322,13 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 	}
 	
 	private void reset() {
-		if (active != null) {
-			bPlayer.addCooldown(active.getName(), ProjectAddons.instance.getConfig().getLong("Abilities.Water.PlantArmor.SubAbilities." + active.getName() + ".Cooldown"));
-		
+		ArmorAbility ending = active;
+		if (ending != null) {
+			bPlayer.addCooldown(ending.getName(), ProjectAddons.instance.getConfig().getLong("Abilities.Water.PlantArmor.SubAbilities." + ending.getName() + ".Cooldown"));
+			if (ending == ArmorAbility.LEAFSHIELD) {
+				this.durability += getAbilityCost("LeafShield");
+			}
 			this.active = null;
-		}
-		
-		if (active == ArmorAbility.LEAFSHIELD) {
-			this.durability += getAbilityCost("LeafShield");
 		}
 		
 		this.range = 0;
@@ -345,6 +351,10 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 	}
 	
 	public void activate(int slot, ClickType type) {
+		if (state != ArmorState.FORMED) {
+			return;
+		}
+		
 		if (this.active != null) {
 			return;
 		}
@@ -371,6 +381,7 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 		if (ability == ArmorAbility.RAZORLEAF) {
 			new RazorLeaf(player, false);
 		} else if (ability == ArmorAbility.DISPERSE) {
+			this.restoreReason = RestoreReason.DISPERSE;
 			this.state = ArmorState.DISPERSING;
 		} else {
 			this.active = ability;
@@ -397,18 +408,26 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 	
 	private void progressForming() {
 		if (sources.size() == requiredPlants) {
-			this.state = ArmorState.FORMED;
-			this.armor = new TempArmor(player, 72000000L, this, armors);
-			
-			this.bar = Bukkit.createBossBar(ChatColor.DARK_AQUA + "Durability [" + ChatColor.GREEN + durability + ChatColor.DARK_AQUA + " / " + maxDurability + "]", BarColor.GREEN, BarStyle.SOLID);
-			this.bar.setProgress(durability / maxDurability);
-			this.bar.addPlayer(player);
-			
-			MultiAbilityManager.bindMultiAbility(player, "PlantArmor");
+			ProjectAddons.instance.getPlantArmorService().beginActivation(player, armors, result -> {
+				if (!result.success()) {
+					restoreReason = RestoreReason.CANCELLED;
+					remove();
+					return;
+				}
+				plantArmorSessionId = result.sessionId();
+				this.state = ArmorState.FORMED;
+				
+				this.bar = Bukkit.createBossBar(ChatColor.DARK_AQUA + "Durability [" + ChatColor.GREEN + durability + ChatColor.DARK_AQUA + " / " + maxDurability + "]", BarColor.GREEN, BarStyle.SOLID);
+				this.bar.setProgress(durability / maxDurability);
+				this.bar.addPlayer(player);
+				
+				MultiAbilityManager.bindMultiAbility(player, "PlantArmor");
+			});
 			return;
 		}
 		
 		if (!player.isSneaking()) {
+			restoreReason = RestoreReason.CANCELLED;
 			remove();
 			return;
 		}

@@ -14,6 +14,7 @@ import me.simplicitee.project.addons.ability.fire.CombustBeam;
 import me.simplicitee.project.addons.ability.fire.FireDisc;
 import me.simplicitee.project.addons.ability.water.RazorLeaf;
 import me.simplicitee.project.addons.ability.water.plantarmor.PlantArmorBackupStore;
+import me.simplicitee.project.addons.ability.water.plantarmor.PlantArmorService;
 import me.simplicitee.project.addons.ability.water.plantarmor.PlantArmorSessions;
 import me.simplicitee.project.addons.util.versionadapter.ParticleAdapter;
 import me.simplicitee.project.addons.util.versionadapter.ParticleAdapterFactory;
@@ -41,6 +42,7 @@ public class ProjectAddons extends JavaPlugin {
 	private PotionEffectAdapter potionEffectAdapter;
 	private PlantArmorBackupStore plantArmorBackupStore;
 	private PlantArmorSessions plantArmorSessions;
+	private PlantArmorService plantArmorService;
 
 	@Override
 	public void onEnable() {
@@ -53,6 +55,7 @@ public class ProjectAddons extends JavaPlugin {
 		this.plantArmorBackupStore = new PlantArmorBackupStore(this);
 		this.plantArmorBackupStore.initialize();
 		this.plantArmorSessions = new PlantArmorSessions();
+		this.plantArmorService = new PlantArmorService(this, plantArmorBackupStore, plantArmorSessions);
 
 		File configFile = new File(getDataFolder(), "project_addons.yml");
 		if (!configFile.exists()) {
@@ -119,6 +122,10 @@ public class ProjectAddons extends JavaPlugin {
 
 	public PlantArmorSessions getPlantArmorSessions() {
 		return plantArmorSessions;
+	}
+
+	public PlantArmorService getPlantArmorService() {
+		return plantArmorService;
 	}
 	
 	@NotNull

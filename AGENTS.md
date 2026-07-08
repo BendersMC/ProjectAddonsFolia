@@ -121,9 +121,13 @@ Pattern:
 ```java
 player.getScheduler().execute(plugin, task -> {
     // player/entity-safe work here
-}, null);
-
+}, null, 0L);
 ```
+
+Paper/Canvas 26.x `EntityScheduler.execute` requires four arguments:
+`entity.getScheduler().execute(plugin, task, retiredCallback, delayTicks)`.
+
+Use `null` for `retiredCallback` when no retired handler is needed, and `0L` for immediate execution.
 
 Do not store long-lived `Player` references in maps. Store `UUID`.
 
