@@ -90,6 +90,39 @@ public final class PlantArmorStyleResolver {
 				thorns, thorns ? 2 : 0);
 	}
 
+	public static boolean isCactusSource(Material material) {
+		return classify(material) == SourceCategory.CACTUS_GROUP;
+	}
+
+	public static int countCactusSources(List<PlantArmorSourceSample> samples) {
+		if (samples == null || samples.isEmpty()) {
+			return 0;
+		}
+		int count = 0;
+		for (PlantArmorSourceSample sample : samples) {
+			if (isCactusSource(sample.material())) {
+				count++;
+			}
+		}
+		return count;
+	}
+
+	public static boolean wouldResolveCactus(List<PlantArmorSourceSample> samples) {
+		if (samples == null || samples.isEmpty()) {
+			return false;
+		}
+		return SourceCategory.CACTUS_GROUP.name().equals(resolve(samples).dominantCategory());
+	}
+
+	public static int cactusFormationThreshold(int requiredPlants) {
+		return Math.min(3, requiredPlants);
+	}
+
+	public static boolean hasEnoughCactusForEarlyCompletion(List<PlantArmorSourceSample> samples, int requiredPlants) {
+		return countCactusSources(samples) >= cactusFormationThreshold(requiredPlants)
+				&& wouldResolveCactus(samples);
+	}
+
 	public static boolean isDryDeadPlantBiome(Biome biome) {
 		if (biome == null) {
 			return false;

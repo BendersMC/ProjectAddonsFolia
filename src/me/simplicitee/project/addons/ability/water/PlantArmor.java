@@ -411,28 +411,8 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 	}
 	
 	private void progressForming() {
-		if (sources.size() == requiredPlants) {
-			PlantArmorStyle style = PlantArmorStyleResolver.resolve(sourceSamples);
-			ProjectAddons.instance.getLogger().fine("PlantArmor style selected: " + style.styleName()
-					+ " dominant=" + style.dominantCategory()
-					+ " biome=" + (style.representativeBiome() == null ? "none" : style.representativeBiome().name()));
-			ItemStack[] temporaryArmor = PlantArmorItems.createTemporaryArmor(style);
-			// Backup is created only here, when temporary PlantArmor is actually equipped — not during forming alone.
-			ProjectAddons.instance.getPlantArmorService().beginActivation(player, temporaryArmor, style, result -> {
-				if (!result.success()) {
-					restoreReason = RestoreReason.CANCELLED;
-					remove();
-					return;
-				}
-				plantArmorSessionId = result.sessionId();
-				this.state = ArmorState.FORMED;
-				
-				this.bar = Bukkit.createBossBar(ChatColor.DARK_AQUA + "Durability [" + ChatColor.GREEN + durability + ChatColor.DARK_AQUA + " / " + maxDurability + "]", BarColor.GREEN, BarStyle.SOLID);
-				this.bar.setProgress(durability / maxDurability);
-				this.bar.addPlayer(player);
-				
-				MultiAbilityManager.bindMultiAbility(player, "PlantArmor");
-			});
+		if (shouldCompleteFormation()) {
+			completeFormation();
 			return;
 		}
 		
@@ -466,6 +446,37 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 		
 		recordSourceSample(b);
 		sources.add(new TempBlock(b, Material.AIR));
+	}
+
+	private boolean shouldCompleteFormation() {
+		if (sources.size() >= requiredPlants) {
+			return true;
+		}
+		return PlantArmorStyleResolver.hasEnoughCactusForEarlyCompletion(sourceSamples, requiredPlants);
+	}
+
+	private void completeFormation() {
+		PlantArmorStyle style = PlantArmorStyleResolver.resolve(sourceSamples);
+		ProjectAddons.instance.getLogger().fine("PlantArmor style selected: " + style.styleName()
+				+ " dominant=" + style.dominantCategory()
+				+ " biome=" + (style.representativeBiome() == null ? "none" : style.representativeBiome().name()));
+		ItemStack[] temporaryArmor = PlantArmorItems.createTemporaryArmor(style);
+		// Backup is created only here, when temporary PlantArmor is actually equipped — not during forming alone.
+		ProjectAddons.instance.getPlantArmorService().beginActivation(player, temporaryArmor, style, result -> {
+			if (!result.success()) {
+				restoreReason = RestoreReason.CANCELLED;
+				remove();
+				return;
+			}
+			plantArmorSessionId = result.sessionId();
+			this.state = ArmorState.FORMED;
+
+			this.bar = Bukkit.createBossBar(ChatColor.DARK_AQUA + "Durability [" + ChatColor.GREEN + durability + ChatColor.DARK_AQUA + " / " + maxDurability + "]", BarColor.GREEN, BarStyle.SOLID);
+			this.bar.setProgress(durability / maxDurability);
+			this.bar.addPlayer(player);
+
+			MultiAbilityManager.bindMultiAbility(player, "PlantArmor");
+		});
 	}
 	
 	private void progressVineWhip() {
