@@ -103,3 +103,488 @@ Pattern:
 player.getScheduler().execute(plugin, task -> {
     // player/entity-safe work here
 }, null);
+
+```
+
+Do not store long-lived `Player` references in maps. Store `UUID`.
+
+### Region / location work
+
+Use the region scheduler for work tied to a specific `Location`.
+
+Examples:
+
+- block changes
+- dropping items at a location
+- spawning particles at fixed locations when not tied to an entity
+- world interactions at a specific block/region
+
+Pattern:
+
+```java
+Bukkit.getRegionScheduler().execute(plugin, location, () -> {
+    // location/region-safe work here
+});
+```
+
+### Global work
+
+Use the global region scheduler only for server-wide/global operations.
+
+Examples:
+
+- console command dispatch
+- world time/weather
+- world border
+- tick-rate/global server state
+
+Pattern:
+
+```java
+Bukkit.getGlobalRegionScheduler().run(plugin, task -> {
+    Bukkit.dispatchCommand(Bukkit.getConsoleSender(), command);
+});
+```
+
+Never use the global scheduler as a lazy replacement for entity or location work.
+
+### Async work
+
+Use async only for non-Bukkit work.
+
+Allowed async work:
+
+- file IO
+- database operations
+- web requests
+- expensive pure calculations
+- parsing config data into plain objects
+
+Forbidden async work:
+
+- reading/writing player inventory
+- entity/world/block access
+- spawning particles/entities
+- ProjectKorra player/entity state unless confirmed thread-safe
+- Bukkit API calls in general
+
+After async work completes, schedule a small continuation back onto the correct entity/region/global scheduler.
+
+## Tick-thread ownership
+
+When mutating a player/entity, the code must be running on that entity’s owning scheduler.
+
+When mutating a location/block, the code must be running on that region’s owning scheduler.
+
+If a method can be called from multiple contexts, either:
+
+1. make it schedule itself onto the correct context, or
+2. clearly document that the caller must already be on the correct scheduler.
+
+Do not silently perform unsafe Bukkit operations from unknown context.
+
+## Commands
+
+Console command dispatch must run on the global region scheduler.
+
+Player/entity command dispatch must run on that player/entity scheduler.
+
+Do not call `Bukkit.dispatchCommand(...)` from async code or from the wrong region context.
+
+## ProjectKorra ability caution
+
+ProjectKorra abilities often run progress/tick-style logic.
+
+Before changing an ability:
+
+1. Identify how ProjectKorra calls the ability.
+2. Identify whether the call is already on the owning player/entity context.
+3. Do not assume ProjectKorra internals make all operations safe on Folia/Canvas.
+4. Keep ability `progress()` methods lightweight.
+5. Avoid scanning all online players/entities every progress tick.
+6. Avoid storing direct Player references in static or long-lived maps.
+7. Use UUID-keyed state when state must outlive a single method call.
+
+## PlantArmor duplication bug
+
+Known bug:
+
+PlantArmor can duplicate the player’s original armor after activating/deactivating the ability.
+
+This must be patched carefully.
+
+Likely causes to audit:
+
+- activation fires twice from main hand and off hand
+- original armor is saved more than once
+- original armor snapshot stores live `ItemStack` references instead of clones
+- restore path runs multiple times from timer/death/quit/disable
+- armor is restored and also dropped
+- original armor is overwritten by temporary PlantArmor
+- cleanup runs from the wrong scheduler
+- player quits/dies/world-changes during active PlantArmor state
+- armor slots contain non-PlantArmor items during restore and are overwritten/deleted
+
+## Required PlantArmor design
+
+Store active PlantArmor state by player UUID, not Player object.
+
+Use an active session object, for example:
+
+```java
+public final class PlantArmorSession {
+    private final UUID playerId;
+    private final ItemStack[] originalArmor;
+    private final AtomicBoolean restored = new AtomicBoolean(false);
+
+    public PlantArmorSession(UUID playerId, ItemStack[] originalArmor) {
+        this.playerId = playerId;
+        this.originalArmor = cloneArmor(originalArmor);
+    }
+
+    public UUID playerId() {
+        return playerId;
+    }
+
+    public ItemStack[] originalArmorClone() {
+        return cloneArmor(originalArmor);
+    }
+
+    public boolean markRestored() {
+        return restored.compareAndSet(false, true);
+    }
+}
+```
+
+The exact implementation may differ, but these rules are mandatory:
+
+### Activation
+
+Activation must run on the player/entity scheduler.
+
+If activation comes from `PlayerInteractEvent`, ignore off-hand activation:
+
+```java
+if (event.getHand() != EquipmentSlot.HAND) {
+    return;
+}
+```
+
+If the player already has an active PlantArmor session, do not save armor again.
+
+Either reject the second activation or refresh duration without replacing the original armor snapshot.
+
+Snapshot original armor using deep clones:
+
+```java
+private static ItemStack[] cloneArmor(ItemStack[] armor) {
+    ItemStack[] clone = new ItemStack[armor.length];
+    for (int i = 0; i < armor.length; i++) {
+        clone[i] = armor[i] == null ? null : armor[i].clone();
+    }
+    return clone;
+}
+```
+
+Record the session before changing armor.
+
+Do not store references from `player.getInventory().getArmorContents()` without cloning.
+
+Do not ever save temporary PlantArmor as the player’s original armor.
+
+### Temporary PlantArmor item identity
+
+Temporary PlantArmor pieces must have a reliable marker.
+
+Prefer `PersistentDataContainer` with a `NamespacedKey`, for example:
+
+```java
+new NamespacedKey(plugin, "plant_armor")
+```
+
+Do not rely only on display name or lore.
+
+Restore logic should only treat tagged temporary pieces as PlantArmor.
+
+### Restore / deactivation
+
+Restore must run on the player/entity scheduler.
+
+Remove the session atomically first:
+
+```java
+PlantArmorSession session = activeSessions.remove(player.getUniqueId());
+if (session == null) {
+    return;
+}
+if (!session.markRestored()) {
+    return;
+}
+```
+
+Restore exactly once.
+
+Use fresh clones when restoring original armor.
+
+Never restore the same original armor and also drop it.
+
+Before restoring original armor, inspect current armor slots.
+
+If a current armor slot contains a temporary PlantArmor piece, it can be replaced.
+
+If a current armor slot contains a non-PlantArmor item, do not delete it. Move it to the player inventory first. If inventory is full, drop it at the player’s location using the correct region-safe flow.
+
+Preferred behavior:
+
+1. Move unexpected non-PlantArmor armor to inventory.
+2. Restore original armor clone into armor slots.
+3. Only drop overflow if inventory cannot accept it.
+4. Never duplicate original armor.
+
+### Quit/death/respawn/disable cleanup
+
+Audit all cleanup paths.
+
+PlayerQuitEvent:
+- Restore safely if possible.
+- Do not duplicate.
+- Do not drop cloned original armor if it is also restored.
+- Do not store Player references.
+
+PlayerDeathEvent:
+Choose one consistent behavior and document it in code.
+
+Preferred safe behavior:
+- restore original armor before vanilla death drops are calculated when possible, so vanilla handles drops normally.
+- remove temporary PlantArmor from drops if necessary.
+- do not add original armor manually to drops if it was restored to the inventory/equipment.
+
+PlayerRespawnEvent:
+- ensure no broken active PlantArmor session remains.
+- do not restore twice.
+
+Plugin disable:
+- iterate active PlantArmor sessions by UUID
+- find online players
+- schedule restore on each player scheduler
+- do not create/drop items for offline players unless persistence exists
+- do not schedule new async tasks after plugin disable has begun
+
+Teleport / portal / world change:
+- do not mutate entity state during Canvas pre-teleport async events
+- use post events or reschedule to the entity scheduler
+- do not assume the old region still owns the player after teleport
+
+## ItemStack safety
+
+Always clone stored `ItemStack`s.
+
+Never store mutable inventory arrays directly.
+
+Never pass a stored session array directly into `setArmorContents`.
+
+Use:
+
+```java
+player.getInventory().setArmorContents(session.originalArmorClone());
+```
+
+Do not mutate `ItemStack` references from config/static templates without cloning first.
+
+## Data structures
+
+Prefer:
+
+```java
+Map<UUID, PlantArmorSession>
+```
+
+over:
+
+```java
+Map<Player, ...>
+```
+
+Use `ConcurrentHashMap<UUID, ...>` if callbacks may come from different scheduler contexts.
+
+Even with `ConcurrentHashMap`, all player inventory/entity mutations must still happen on that player’s scheduler.
+
+## Project-wide audit targets
+
+Search for and patch unsafe usage of:
+
+- `Bukkit.getScheduler`
+- `BukkitRunnable`
+- `runTask`
+- `runTaskLater`
+- `runTaskTimer`
+- `runTaskAsynchronously`
+- `scheduleSync`
+- `getOnlinePlayers` inside repeating tasks
+- static `Player` maps/lists
+- live `ItemStack[]` snapshots
+- `Bukkit.dispatchCommand`
+- global scheduler used for player/entity work
+- async tasks touching Bukkit/ProjectKorra entity/world APIs
+- large loops inside ability progress methods
+- block/entity access from unknown scheduler context
+
+## Canvas support marker
+
+Canvas will only attempt to load plugins that declare support.
+
+Use one marker only:
+
+```yaml
+folia-supported: true
+```
+
+Use this when the plugin remains Paper/Folia-compatible and does not require Canvas-exclusive API.
+
+Use:
+
+```yaml
+canvas-supported: true
+```
+
+only if the plugin uses Canvas-exclusive API and cannot run correctly on base Folia.
+
+Do not set both unless explicitly requested and justified.
+
+Adding a support marker is not enough. The code must actually be scheduler-safe.
+
+## Canvas API dependency
+
+Only add Canvas API if Canvas-exclusive API is actually used.
+
+For Maven, Canvas API would be added as a provided dependency from the Canvas snapshots repository.
+
+Do not add this just for normal Folia-safe scheduler work.
+
+## Events
+
+Canvas adds region-threading-specific events, especially around teleport, portal, world unload, and respawn.
+
+If using Canvas-specific teleport/portal events:
+
+- do not modify entity state in pre teleport/portal async events
+- use post events for state changes after the entity is placed into the new region
+- schedule player/entity mutations onto the entity scheduler when in doubt
+
+## Tick-rate API
+
+Do not use Bukkit’s tick-rate manager on Canvas.
+
+Only touch Canvas tick-rate APIs if the feature specifically requires tick-rate manipulation.
+
+ProjectAddons ability logic should normally not touch tick-rate APIs.
+
+## Performance rules
+
+Avoid global repeating loops.
+
+Avoid scanning all entities/players every tick.
+
+Avoid expensive particle/entity/block loops inside ability progress methods.
+
+Prefer:
+
+- per-player ability lifecycle
+- event-driven state
+- small bounded per-tick work
+- caching immutable config values
+- async IO/config parsing with scheduler-safe continuation
+
+Do not block region/entity/global scheduler threads.
+
+Never use:
+
+```java
+Thread.sleep(...)
+future.get()
+future.join()
+```
+
+inside scheduler callbacks or ability progress methods.
+
+## Required workflow for agents
+
+Before editing:
+
+1. Inspect the repo structure.
+2. Identify build system.
+3. Identify plugin metadata file.
+4. Identify main plugin class.
+5. Identify ProjectKorra ability registration flow.
+6. Identify all PlantArmor files/classes.
+7. Identify scheduler/threading risks.
+8. Produce an audit report.
+9. Wait for approval before code changes.
+
+First audit response must include:
+
+- files/classes inspected
+- current build metadata
+- plugin support marker status
+- unsafe scheduler/API usage found
+- PlantArmor duplication suspects
+- proposed patch plan
+- compile/test plan
+
+After approval, edit in small steps:
+
+1. Add scheduler utility methods if useful.
+2. Add/patch PlantArmor session state.
+3. Add reliable temporary PlantArmor tagging.
+4. Patch activation.
+5. Patch restore/deactivation.
+6. Patch quit/death/respawn/disable cleanup.
+7. Replace unsafe scheduler usage.
+8. Run Maven build.
+9. Fix compile errors.
+10. Summarize changed files and remaining risks.
+
+## Testing checklist
+
+After changes, test:
+
+- activate PlantArmor with empty armor
+- activate PlantArmor with full armor
+- spam activate key/click
+- activate from main hand and off hand
+- deactivate normally
+- let duration expire
+- logout while active
+- die while active
+- respawn after active death
+- teleport while active
+- world change while active
+- plugin disable while active
+- inventory full while restoring
+- armor slots changed while PlantArmor active
+- multiple players active at once
+- Folia/Canvas server console for thread ownership errors
+
+Expected result:
+
+- original armor returns exactly once
+- temporary PlantArmor does not duplicate
+- original armor does not duplicate
+- player-added armor during active state is not deleted
+- no `Thread failed main thread check`
+- no `UnsupportedOperationException` from BukkitScheduler or wrong command dispatch
+- no blocking scheduler warnings
+
+## Style
+
+Keep code simple.
+
+Prefer readable helpers over clever abstractions.
+
+Add comments only where they explain Folia/Canvas safety or dupe prevention.
+
+Do not churn formatting across unrelated files.
+
+Do not make unrelated gameplay changes.
+
+When unsure, stop and report the uncertainty instead of guessing.
