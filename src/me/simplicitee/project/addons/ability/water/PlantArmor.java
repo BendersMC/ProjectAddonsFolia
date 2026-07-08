@@ -320,6 +320,11 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 			this.bar.removeAll();
 		}
 	}
+
+	public void endFromManualArmorRemoval() {
+		this.restoreReason = RestoreReason.MANUAL_ARMOR_REMOVAL;
+		remove();
+	}
 	
 	private void reset() {
 		ArmorAbility ending = active;

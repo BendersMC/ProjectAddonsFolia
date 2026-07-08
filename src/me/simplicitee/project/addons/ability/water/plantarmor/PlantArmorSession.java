@@ -15,13 +15,16 @@ public final class PlantArmorSession {
 	private final String sessionId;
 	private final ItemStack[] originalArmor;
 	private final long createdAtMillis;
+	private final int expectedTaggedArmorCount;
 	private final AtomicBoolean restored = new AtomicBoolean(false);
 
-	public PlantArmorSession(UUID playerId, String sessionId, ItemStack[] originalArmor, long createdAtMillis) {
+	public PlantArmorSession(UUID playerId, String sessionId, ItemStack[] originalArmor, long createdAtMillis,
+			int expectedTaggedArmorCount) {
 		this.playerId = playerId;
 		this.sessionId = sessionId;
 		this.originalArmor = cloneArmor(originalArmor);
 		this.createdAtMillis = createdAtMillis;
+		this.expectedTaggedArmorCount = expectedTaggedArmorCount;
 	}
 
 	public UUID playerId() {
@@ -34,6 +37,10 @@ public final class PlantArmorSession {
 
 	public long createdAtMillis() {
 		return createdAtMillis;
+	}
+
+	public int expectedTaggedArmorCount() {
+		return expectedTaggedArmorCount;
 	}
 
 	public ItemStack[] originalArmorClone() {
