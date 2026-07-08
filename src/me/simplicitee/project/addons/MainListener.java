@@ -49,6 +49,8 @@ import me.simplicitee.project.addons.ability.water.PlantArmor;
 import me.simplicitee.project.addons.ability.water.RazorLeaf;
 import me.simplicitee.project.addons.util.BendingPredicate;
 import me.simplicitee.project.addons.util.LightManager;
+import me.simplicitee.project.addons.util.SchedulerUtil;
+import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.Sound;
@@ -74,17 +76,17 @@ import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.event.player.PlayerToggleSneakEvent;
 import org.bukkit.inventory.EquipmentSlot;
-import org.bukkit.scheduler.BukkitRunnable;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 public class MainListener implements Listener {
 	
 	private ProjectAddons plugin;
-	private Map<Player, HashMap<Integer, String>> swapped;
+	private Map<UUID, HashMap<Integer, String>> swapped;
 
 	public MainListener(ProjectAddons plugin) {
 		this.plugin = plugin;
@@ -450,10 +452,18 @@ public class MainListener implements Listener {
 		if (event.isCancelled()) {
 			return;
 		}
-		
-		Player player = event.getPlayer();
+
 		String[] args = event.getMessage().split(" ");
-		
+		if (!args[0].equalsIgnoreCase("@energycolor") && !args[0].equalsIgnoreCase("@vocalsound")) {
+			return;
+		}
+
+		event.setCancelled(true);
+		Player player = event.getPlayer();
+		SchedulerUtil.runForPlayer(plugin, player, () -> handleChatCommand(player, args));
+	}
+
+	private void handleChatCommand(Player player, String[] args) {
 		if (args[0].equalsIgnoreCase("@energycolor")) {
 			if (!player.hasPermission("bending.ability.energybeam")) {
 				player.sendMessage(ProjectAddons.instance.prefix() + ChatColor.RED + " You do not have permission to change color");
@@ -469,7 +479,6 @@ public class MainListener implements Listener {
 					player.sendMessage(ProjectAddons.instance.prefix() + ChatColor.RED + " Unknown color! Try red, blue, yellow, green, purple, orange, indigo, brown, white, or black!");
 				}
 			}
-			event.setCancelled(true);
 		} else if (args[0].equalsIgnoreCase("@vocalsound")) {
 			if (!player.hasPermission("bending.ability.VocalMimicry")) {
 				player.sendMessage(ProjectAddons.instance.prefix() + ChatColor.RED + " You do not have permission to change vocal noise");
@@ -489,7 +498,6 @@ public class MainListener implements Listener {
 					player.sendMessage(ProjectAddons.instance.prefix() + ChatColor.RED + " Unknown sound!");
 				}
 			}
-			event.setCancelled(true);
 		}
 	}
 	
@@ -504,13 +512,9 @@ public class MainListener implements Listener {
         }
 
         event.getSender().sendMessage(ProjectAddons.instance.prefix() + " Config reloaded");
-		
-		new BukkitRunnable() {
-			@Override
-			public void run() {
-				CoreAbility.registerPluginAbilities(plugin, "me.simplicitee.project.addons.ability");
-			}
-		}.runTaskLater(plugin, 1);
+
+		Bukkit.getGlobalRegionScheduler().runDelayed(plugin, task ->
+				CoreAbility.registerPluginAbilities(plugin, "me.simplicitee.project.addons.ability"), 1L);
 	}
 	
 	@EventHandler
@@ -547,13 +551,14 @@ public class MainListener implements Listener {
 				return;
 			}
 			
-			if (swapped.containsKey(player)) {
-				bPlayer.setAbilities(swapped.get(player));
-				swapped.remove(player);
+			UUID playerId = player.getUniqueId();
+			if (swapped.containsKey(playerId)) {
+				bPlayer.setAbilities(swapped.get(playerId));
+				swapped.remove(playerId);
 				ActionBar.sendActionBar(ChatColor.YELLOW + "Swapped to original binds", player);
 				BendingBoardManager.updateAllSlots(player);
 			} else if (Preset.presetExists(player, "offhand_swap")) {
-				swapped.put(player, new HashMap<>(bPlayer.getAbilities()));
+				swapped.put(playerId, new HashMap<>(bPlayer.getAbilities()));
 				Preset.bindPreset(player, Preset.getPreset(player, "offhand_swap"));
 				ActionBar.sendActionBar(ChatColor.YELLOW + "Swapped to offhand preset", player);
 				BendingBoardManager.updateAllSlots(player);
@@ -562,14 +567,20 @@ public class MainListener implements Listener {
 	}
 	
 	public void revertSwappedBinds() {
-		for (Player player : swapped.keySet()) {
-			BendingPlayer bPlayer = BendingPlayer.getBendingPlayer(player);
-			
-			if (bPlayer == null) {
+		for (Map.Entry<UUID, HashMap<Integer, String>> entry : new HashMap<>(swapped).entrySet()) {
+			UUID playerId = entry.getKey();
+			HashMap<Integer, String> abilities = entry.getValue();
+			Player player = Bukkit.getPlayer(playerId);
+			if (player == null || !player.isOnline()) {
 				continue;
 			}
-			
-			bPlayer.setAbilities(swapped.get(player));
+
+			SchedulerUtil.runForPlayer(plugin, player, () -> {
+				BendingPlayer bPlayer = BendingPlayer.getBendingPlayer(player);
+				if (bPlayer != null) {
+					bPlayer.setAbilities(abilities);
+				}
+			});
 		}
 		swapped.clear();
 	}

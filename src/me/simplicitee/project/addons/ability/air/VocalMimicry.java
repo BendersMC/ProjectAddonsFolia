@@ -9,10 +9,11 @@ import org.bukkit.Sound;
 import org.bukkit.entity.Player;
 
 import java.util.HashMap;
+import java.util.UUID;
 
 public class VocalMimicry extends SoundAbility implements AddonAbility {
 	
-	private static HashMap<Player, Sound> selected = new HashMap<>();
+	private static HashMap<UUID, Sound> selected = new HashMap<>();
 
 	@Attribute("Volume")
 	private float volume;
@@ -26,7 +27,7 @@ public class VocalMimicry extends SoundAbility implements AddonAbility {
 		
 		volume = (float) ProjectAddons.instance.getConfig().getDouble("Abilities.Air.VocalMimicry.Volume");
 		pitch = (float) ProjectAddons.instance.getConfig().getDouble("Abilities.Air.VocalMimicry.Pitch");
-		sound = (selected.containsKey(player) ? selected.get(player) : Sound.BLOCK_NOTE_BLOCK_DIDGERIDOO);
+		sound = selected.getOrDefault(player.getUniqueId(), Sound.BLOCK_NOTE_BLOCK_DIDGERIDOO);
 		
 		start();
 	}
@@ -94,6 +95,6 @@ public class VocalMimicry extends SoundAbility implements AddonAbility {
 	}
 
 	public static void selectSound(Player player, Sound sound) {
-		selected.put(player, sound);
+		selected.put(player.getUniqueId(), sound);
 	}
 }
