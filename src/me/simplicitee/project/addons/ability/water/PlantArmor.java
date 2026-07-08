@@ -408,6 +408,7 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 	
 	private void progressForming() {
 		if (sources.size() == requiredPlants) {
+			// Backup is created only here, when temporary PlantArmor is actually equipped — not during forming alone.
 			ProjectAddons.instance.getPlantArmorService().beginActivation(player, armors, result -> {
 				if (!result.success()) {
 					restoreReason = RestoreReason.CANCELLED;

@@ -14,6 +14,7 @@ import me.simplicitee.project.addons.ability.fire.CombustBeam;
 import me.simplicitee.project.addons.ability.fire.FireDisc;
 import me.simplicitee.project.addons.ability.water.RazorLeaf;
 import me.simplicitee.project.addons.ability.water.plantarmor.PlantArmorBackupStore;
+import me.simplicitee.project.addons.ability.water.plantarmor.PlantArmorListener;
 import me.simplicitee.project.addons.ability.water.plantarmor.PlantArmorService;
 import me.simplicitee.project.addons.ability.water.plantarmor.PlantArmorSessions;
 import me.simplicitee.project.addons.util.versionadapter.ParticleAdapter;
@@ -81,12 +82,15 @@ public class ProjectAddons extends JavaPlugin {
 		potionEffectAdapter = potionEffectAdapterFactory.getAdapter();
 
 		this.listener = new MainListener(this);
+		getServer().getPluginManager().registerEvents(new PlantArmorListener(plantArmorService), this);
 
 		this.getCommand("projectaddons").setExecutor(new ProjectCommand());
 	}
 	
 	@Override
 	public void onDisable() {
+		plantArmorService.shutdownRestoreOnlinePlayers();
+
 		listener.revertSwappedBinds();
 		
 		if (CoreAbility.getAbility(Crumble.class) != null) {

@@ -14,6 +14,10 @@ public final class SchedulerUtil {
 		player.getScheduler().execute(plugin, runnable, null, 0L);
 	}
 
+	public static void runForPlayerDelayed(Plugin plugin, Player player, Runnable runnable, long delayTicks) {
+		player.getScheduler().execute(plugin, runnable, null, delayTicks);
+	}
+
 	public static void runForEntity(Plugin plugin, Entity entity, Runnable runnable) {
 		entity.getScheduler().execute(plugin, runnable, null, 0L);
 	}

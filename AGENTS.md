@@ -427,9 +427,34 @@ Suggested implementation:
 
 - `PlantArmorBackupStore`
 - backups under `plugins/ProjectAddons/plantarmor-backups/<uuid>.yml`
+- one YAML file per player with an active or unresolved PlantArmor backup (not one large accumulating file)
 - backup includes UUID, session id, created timestamp, cloned original armor contents
 - use atomic write where practical: temp file then move/replace
 - leave backup in place if restore fails or player is offline on disable
+
+### When backups are created
+
+Backups must **only** be created when a player actively enters the temporary PlantArmor armor state:
+
+- backup is written immediately before equipping tagged temporary PlantArmor
+- do **not** back up armor for all online players
+- do **not** create backups for players who merely have PlantArmor bound
+- do **not** create backups for players who start forming but never complete equip
+
+### Backup cleanup
+
+1. Delete the player's backup file after a successful restore.
+2. Delete the player's backup file on join if current armor already safely matches the backed-up original armor.
+3. Delete the backup only when recovery is definitely complete and safe.
+4. Do not delete the backup if state is ambiguous.
+5. Do not delete the backup if the player is offline during disable.
+6. Do not delete the backup if restore fails.
+7. Log ambiguous/stale backups for manual review instead of deleting them.
+8. Never overwrite an existing backup for the same UUID unless the old backup has been safely resolved.
+
+Store helpers: `hasBackup(UUID)`, `countBackups()`, `listBackupPlayerIds()`.
+
+On plugin disable, log how many unresolved PlantArmor backup files remain for next-login recovery.
 
 ## ItemStack safety
 

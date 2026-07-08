@@ -9,11 +9,21 @@ import java.io.IOException;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.UUID;
 import java.util.logging.Level;
 
 /**
- * Durable backup store for PlantArmor original armor. Writes only; does not equip or restore armor.
+ * Durable per-player backup store for PlantArmor original armor.
+ *
+ * <p>Layout: {@code plugins/ProjectAddons/plantarmor-backups/<uuid>.yml} — one file per player with an
+ * active or unresolved backup, not a single accumulating file.
+ *
+ * <p>Writes only; does not equip or restore armor. Backups are created only when
+ * {@link PlantArmorService#beginActivationOnEntityThread} equips temporary PlantArmor, never for bound
+ * abilities, forming-only state, or bulk/online-player scans.
  */
 public final class PlantArmorBackupStore {
 
@@ -39,7 +49,14 @@ public final class PlantArmorBackupStore {
 		return backupDirectory;
 	}
 
+	/**
+	 * Persists a new backup. Refuses to overwrite an existing unresolved backup for the same player.
+	 */
 	public boolean saveBackup(UUID playerId, String sessionId, ItemStack[] originalArmor) throws IOException {
+		if (hasBackup(playerId)) {
+			throw new IOException("Refusing to overwrite unresolved PlantArmor backup for " + playerId);
+		}
+
 		long createdAtMillis = System.currentTimeMillis();
 		ItemStack[] clonedArmor = PlantArmorSession.cloneArmor(originalArmor);
 
@@ -105,16 +122,43 @@ public final class PlantArmorBackupStore {
 		return true;
 	}
 
+	public int countBackups() {
+		return listBackupPlayerIds().size();
+	}
+
+	public List<UUID> listBackupPlayerIds() {
+		File[] files = backupDirectory.listFiles((dir, name) -> name.endsWith(SUFFIX) && !name.endsWith(TEMP_SUFFIX));
+		if (files == null || files.length == 0) {
+			return Collections.emptyList();
+		}
+
+		List<UUID> playerIds = new ArrayList<>(files.length);
+		for (File file : files) {
+			String name = file.getName();
+			String uuidPart = name.substring(0, name.length() - SUFFIX.length());
+			try {
+				playerIds.add(UUID.fromString(uuidPart));
+			} catch (IllegalArgumentException e) {
+				plugin.getLogger().warning("Ignoring invalid PlantArmor backup filename: " + name);
+			}
+		}
+		return playerIds;
+	}
+
 	private File backupFile(UUID playerId) {
 		return new File(backupDirectory, playerId + SUFFIX);
 	}
 
 	private void atomicReplace(File tempFile, File finalFile) throws IOException {
+		if (finalFile.exists()) {
+			tempFile.delete();
+			throw new IOException("Refusing to overwrite unresolved PlantArmor backup: " + finalFile.getName());
+		}
+
 		try {
-			Files.move(tempFile.toPath(), finalFile.toPath(),
-					StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+			Files.move(tempFile.toPath(), finalFile.toPath(), StandardCopyOption.ATOMIC_MOVE);
 		} catch (AtomicMoveNotSupportedException e) {
-			Files.move(tempFile.toPath(), finalFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+			Files.move(tempFile.toPath(), finalFile.toPath());
 		} catch (IOException e) {
 			plugin.getLogger().log(Level.WARNING, "Failed to move PlantArmor backup into place: " + finalFile.getName(), e);
 			throw e;
