@@ -13,6 +13,8 @@ import me.simplicitee.project.addons.ability.earth.Crumble;
 import me.simplicitee.project.addons.ability.fire.CombustBeam;
 import me.simplicitee.project.addons.ability.fire.FireDisc;
 import me.simplicitee.project.addons.ability.water.RazorLeaf;
+import me.simplicitee.project.addons.ability.water.plantarmor.PlantArmorBackupStore;
+import me.simplicitee.project.addons.ability.water.plantarmor.PlantArmorSessions;
 import me.simplicitee.project.addons.util.versionadapter.ParticleAdapter;
 import me.simplicitee.project.addons.util.versionadapter.ParticleAdapterFactory;
 import me.simplicitee.project.addons.util.versionadapter.PotionEffectAdapter;
@@ -37,6 +39,8 @@ public class ProjectAddons extends JavaPlugin {
 
 	private ParticleAdapter particleAdapter;
 	private PotionEffectAdapter potionEffectAdapter;
+	private PlantArmorBackupStore plantArmorBackupStore;
+	private PlantArmorSessions plantArmorSessions;
 
 	@Override
 	public void onEnable() {
@@ -45,6 +49,10 @@ public class ProjectAddons extends JavaPlugin {
 		if (!getDataFolder().exists()) {
 			getDataFolder().mkdirs();
 		}
+
+		this.plantArmorBackupStore = new PlantArmorBackupStore(this);
+		this.plantArmorBackupStore.initialize();
+		this.plantArmorSessions = new PlantArmorSessions();
 
 		File configFile = new File(getDataFolder(), "project_addons.yml");
 		if (!configFile.exists()) {
@@ -103,6 +111,14 @@ public class ProjectAddons extends JavaPlugin {
 
 	public PotionEffectAdapter getPotionEffectAdapter() {
 		return this.potionEffectAdapter;
+	}
+
+	public PlantArmorBackupStore getPlantArmorBackupStore() {
+		return plantArmorBackupStore;
+	}
+
+	public PlantArmorSessions getPlantArmorSessions() {
+		return plantArmorSessions;
 	}
 	
 	@NotNull

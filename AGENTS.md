@@ -47,6 +47,25 @@ Before changing dependencies, inspect the current `pom.xml`.
 
 When possible, preserve the current Java language level unless code changes require updating it.
 
+## Target Runtime Requirement
+
+This fork targets Minecraft/Paper/Canvas 26.1.2 and newer.
+
+Build rules:
+
+1. Do not keep the project locked to Spigot API 1.20.5 or Paper API 1.21.x.
+2. Use Paper API 26.1.2+ as the primary Minecraft API dependency.
+3. For Maven, use:
+   groupId: io.papermc.paper
+   artifactId: paper-api
+   version: [26.1.2.build,)
+   scope: provided
+4. Use Java 25 unless there is a hard compile reason not to.
+5. Keep ProjectKorra provided.
+6. Do not add Canvas API unless Canvas-exclusive APIs are actually used.
+7. Do not add folia-supported or canvas-supported until scheduler safety work is complete.
+8. If ProjectKorra 1.12.0 conflicts with the 26.1.2+ API, do not downgrade Paper. Report the conflict clearly and propose the smallest compatibility fix.
+
 ## Folia / Canvas / Affinity model
 
 Canvas is Folia-based. There is no universal safe Bukkit main thread.
@@ -374,6 +393,39 @@ Teleport / portal / world change:
 - do not mutate entity state during Canvas pre-teleport async events
 - use post events or reschedule to the entity scheduler
 - do not assume the old region still owns the player after teleport
+
+## PlantArmor Durable Backup / No Armor Loss Requirement
+
+PlantArmor must protect against **both armor duplication and armor loss**. A memory-only session is not acceptable because server restart, plugin reload, crash, watchdog halt, or severe lag could happen while a player is wearing temporary PlantArmor.
+
+Rules:
+
+1. Before replacing a player's real armor with temporary PlantArmor, the plugin must create a durable backup of the original armor.
+2. The durable backup must be written before temporary PlantArmor is equipped.
+3. If the backup write fails, activation must abort and the player's armor must not be changed.
+4. The backup must be keyed by player UUID and a unique PlantArmor session id.
+5. The same session id must be stored on every temporary PlantArmor piece using PersistentDataContainer.
+6. On restore, only restore from the matching session backup.
+7. Do not delete the backup until restore completes successfully.
+8. On player join/startup, if a backup exists and the player is wearing matching temporary PlantArmor, restore the original armor.
+9. If a backup exists but the player's current armor already matches the backup, clean up the stale backup without adding items.
+10. If a backup exists but current state is ambiguous, do not blindly overwrite or delete anything. Log a warning and prefer safe manual recovery over item loss.
+11. Delayed restore tasks must check the active session id before restoring, so lagged/stale tasks cannot restore old armor.
+12. Restore must be idempotent. Repeated restore calls must not duplicate or delete armor.
+13. Restart, reload, crash, plugin disable, or severe lag must not cause original armor to be lost.
+14. Never store only live memory state as the source of truth for original armor.
+
+Required transaction order:
+
+`backup first` → `equip temporary armor` → `restore once` → `delete backup last`
+
+Suggested implementation:
+
+- `PlantArmorBackupStore`
+- backups under `plugins/ProjectAddons/plantarmor-backups/<uuid>.yml`
+- backup includes UUID, session id, created timestamp, cloned original armor contents
+- use atomic write where practical: temp file then move/replace
+- leave backup in place if restore fails or player is offline on disable
 
 ## ItemStack safety
 
