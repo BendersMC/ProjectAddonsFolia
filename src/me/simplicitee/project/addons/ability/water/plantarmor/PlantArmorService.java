@@ -72,12 +72,19 @@ public final class PlantArmorService {
 	}
 
 	public void restore(Player player, RestoreReason reason) {
-		restore(player, reason, null);
+		endPlantArmor(player, reason, null);
 	}
 
 	public void restore(Player player, RestoreReason reason, String expectedSessionId) {
-		SchedulerUtil.runForPlayer(plugin, player, () ->
-				restoreWithActiveSession(player, reason, expectedSessionId));
+		endPlantArmor(player, reason, expectedSessionId);
+	}
+
+	/**
+	 * Single authoritative end path for all PlantArmor restore requests.
+	 * Uses the durable backup as source of truth; does not require the ability instance or in-memory session.
+	 */
+	public void endPlantArmor(Player player, RestoreReason reason, String expectedSessionId) {
+		SchedulerUtil.runForPlayer(plugin, player, () -> restoreOnEntityThread(player, reason, expectedSessionId));
 	}
 
 	public boolean hasActivePlantArmorState(UUID playerId) {
@@ -153,8 +160,8 @@ public final class PlantArmorService {
 			logAmbiguous(playerId, backup.sessionId(), RestoreReason.JOIN,
 					"player wears PlantArmor tagged with a different session id");
 		} else {
-			logAmbiguous(playerId, backup.sessionId(), RestoreReason.JOIN,
-					"backup exists but armor does not match backup or tagged PlantArmor");
+			plugin.getLogger().info("PlantArmor join recovery: restoring from unresolved backup for " + playerId);
+			restoreOnEntityThread(player, RestoreReason.JOIN, backup.sessionId());
 		}
 	}
 
@@ -177,23 +184,34 @@ public final class PlantArmorService {
 	}
 
 	public boolean hasMatchingTaggedPlantArmor(Player player, String sessionId) {
+		return countSessionPlantArmorItems(player, sessionId) > 0;
+	}
+
+	public int countSessionPlantArmorItems(Player player, String sessionId) {
 		if (sessionId == null) {
-			return false;
+			return 0;
 		}
-		boolean found = false;
+		int count = 0;
 		for (ItemStack stack : player.getInventory().getArmorContents()) {
-			if (stack == null) {
-				continue;
+			if (PlantArmorItems.isPlantArmorForSession(plugin, stack, sessionId)) {
+				count++;
 			}
-			if (!PlantArmorItems.isPlantArmorItem(plugin, stack)) {
-				continue;
-			}
-			if (!sessionId.equals(PlantArmorItems.getSessionId(plugin, stack))) {
-				return false;
-			}
-			found = true;
 		}
-		return found;
+		for (ItemStack stack : player.getInventory().getStorageContents()) {
+			if (PlantArmorItems.isPlantArmorForSession(plugin, stack, sessionId)) {
+				count++;
+			}
+		}
+		if (PlantArmorItems.isPlantArmorForSession(plugin, player.getInventory().getItemInOffHand(), sessionId)) {
+			count++;
+		}
+		if (player.getOpenInventory() != null) {
+			ItemStack cursor = player.getOpenInventory().getCursor();
+			if (PlantArmorItems.isPlantArmorForSession(plugin, cursor, sessionId)) {
+				count++;
+			}
+		}
+		return count;
 	}
 
 	public boolean cleanupStaleBackupIfAlreadyRestored(Player player) {
@@ -231,7 +249,7 @@ public final class PlantArmorService {
 				} else {
 					String sessionId = getSessionId(playerId);
 					if (sessionId != null) {
-						restoreWithActiveSession(player, RestoreReason.QUIT, sessionId);
+						restoreOnEntityThread(player, RestoreReason.QUIT, sessionId);
 					}
 				}
 			}, null, 0L);
@@ -252,7 +270,7 @@ public final class PlantArmorService {
 		if (backup != null && (hasMatchingTaggedPlantArmor(player, backup.sessionId()) || sessions.contains(playerId))) {
 			restoreFromBackupOnEntityThread(player, backup, RestoreReason.DEATH, false);
 		} else if (sessions.contains(playerId)) {
-			restoreWithActiveSession(player, RestoreReason.DEATH, getSessionId(playerId));
+			restoreOnEntityThread(player, RestoreReason.DEATH, getSessionId(playerId));
 		}
 
 		stripPlantArmorFromDrops(event, backupSessionId);
@@ -362,40 +380,51 @@ public final class PlantArmorService {
 		return ActivationResult.ok(sessionId);
 	}
 
-	private boolean restoreWithActiveSession(Player player, RestoreReason reason, String expectedSessionId) {
+	private boolean restoreOnEntityThread(Player player, RestoreReason reason, String expectedSessionId) {
 		UUID playerId = player.getUniqueId();
+		PlantArmorSession activeSession = sessions.get(playerId);
+		String activeSessionId = activeSession == null ? null : activeSession.sessionId();
 
-		PlantArmorSession session = sessions.get(playerId);
-		if (session == null) {
-			return false;
-		}
-		if (expectedSessionId != null && !expectedSessionId.equals(session.sessionId())) {
-			plugin.getLogger().fine("PlantArmor restore ignored (" + reason + "): stale session id for " + playerId);
-			return false;
-		}
-
-		session = sessions.remove(playerId);
-		if (session == null) {
-			return false;
-		}
-		if (!session.markRestored()) {
-			plugin.getLogger().fine("PlantArmor restore ignored (" + reason + "): already restored for " + playerId);
-			return false;
-		}
+		plugin.getLogger().info("PlantArmor restore requested: player=" + playerId + " reason=" + reason
+				+ " expectedSession=" + expectedSessionId + " activeSession=" + activeSessionId);
 
 		PlantArmorBackup backup = backupStore.loadBackup(playerId);
 		if (backup == null) {
-			plugin.getLogger().warning("PlantArmor restore ambiguous (" + reason + "): no durable backup for " + playerId
-					+ "; leaving any on-disk state untouched");
-			return false;
+			if (activeSession != null) {
+				sessions.remove(playerId);
+				activeSession.markRestored();
+			}
+			releaseRestoreClaim(playerId);
+			plugin.getLogger().info("PlantArmor restore skipped: no backup for " + playerId + " (" + reason + ")");
+			return true;
 		}
-		if (!backup.sessionId().equals(session.sessionId())) {
-			plugin.getLogger().warning("PlantArmor restore ambiguous (" + reason + "): backup session id mismatch for "
-					+ playerId + "; backup left in place");
+
+		plugin.getLogger().info("PlantArmor restore started: player=" + playerId + " backupSession=" + backup.sessionId()
+				+ " activeSession=" + activeSessionId);
+
+		if (expectedSessionId != null && !expectedSessionId.equals(backup.sessionId())) {
+			plugin.getLogger().warning("PlantArmor restore blocked: expected session " + expectedSessionId
+					+ " does not match backup session " + backup.sessionId() + " for " + playerId);
 			return false;
 		}
 
+		if (activeSession != null && !activeSession.sessionId().equals(backup.sessionId())) {
+			logAmbiguous(playerId, backup.sessionId(), reason, "active session id does not match backup");
+			return false;
+		}
+
+		if (activeSession != null) {
+			sessions.remove(playerId);
+			if (!activeSession.markRestored()) {
+				plugin.getLogger().fine("PlantArmor restore ignored (" + reason + "): session already restored for " + playerId);
+			}
+		}
+
 		return restoreFromBackupOnEntityThread(player, backup, reason, true);
+	}
+
+	private boolean restoreWithActiveSession(Player player, RestoreReason reason, String expectedSessionId) {
+		return restoreOnEntityThread(player, reason, expectedSessionId);
 	}
 
 	private boolean restoreFromBackupOnEntityThread(Player player, PlantArmorBackup backup, RestoreReason reason,
@@ -418,11 +447,12 @@ public final class PlantArmorService {
 		}
 
 		if (!claimRestore(playerId)) {
-			plugin.getLogger().fine("PlantArmor restore ignored (" + reason + "): restore already claimed for " + playerId);
+			plugin.getLogger().info("PlantArmor restore blocked: restore already claimed for " + playerId + " (" + reason + ")");
 			return false;
 		}
 
-		stripSessionPlantArmorFromPlayer(player, backup.sessionId());
+		int stripped = stripSessionPlantArmorFromPlayer(player, backup.sessionId());
+		plugin.getLogger().info("PlantArmor restore: stripped " + stripped + " matching temp piece(s) for " + playerId);
 
 		if (!reconcileArmorSlots(player, backup.sessionId())) {
 			releaseRestoreClaim(playerId);
@@ -431,11 +461,21 @@ public final class PlantArmorService {
 		}
 
 		player.getInventory().setArmorContents(backup.originalArmorClone());
+		plugin.getLogger().info("PlantArmor restore: setArmorContents from backup for " + playerId + " (" + reason + ")");
+
+		if (countSessionPlantArmorItems(player, backup.sessionId()) > 0) {
+			releaseRestoreClaim(playerId);
+			logAmbiguous(playerId, backup.sessionId(), reason, "matching temp PlantArmor still present after restore");
+			return false;
+		}
 
 		if (!backupStore.deleteBackup(playerId)) {
 			plugin.getLogger().warning("PlantArmor restore completed but failed to delete backup for " + playerId);
+		} else {
+			plugin.getLogger().info("PlantArmor restore: backup deleted for " + playerId + " (" + reason + ")");
 		}
 		sessions.remove(playerId);
+		releaseRestoreClaim(playerId);
 		return true;
 	}
 
@@ -460,12 +500,7 @@ public final class PlantArmorService {
 			if (ability != null) {
 				ability.endFromManualArmorRemoval();
 			} else {
-				PlantArmorBackup backup = backupStore.loadBackup(playerId);
-				if (backup != null) {
-					restoreFromBackupOnEntityThread(player, backup, RestoreReason.MANUAL_ARMOR_REMOVAL, false);
-				} else {
-					restoreWithActiveSession(player, RestoreReason.MANUAL_ARMOR_REMOVAL, sessionId);
-				}
+				endPlantArmor(player, RestoreReason.MANUAL_ARMOR_REMOVAL, sessionId);
 			}
 
 			player.sendMessage(ChatColor.YELLOW + "PlantArmor ended because you removed the armor.");
@@ -483,20 +518,25 @@ public final class PlantArmorService {
 		}
 
 		if (currentArmorMatchesBackup(player, backup)) {
+			plugin.getLogger().info("PlantArmor activation recovery: armor already matches backup for " + playerId);
 			return cleanupStaleBackupIfAlreadyRestored(player);
 		}
 
 		if (hasMatchingTaggedPlantArmor(player, backup.sessionId()) || sessions.contains(playerId)) {
-			return restoreFromBackupOnEntityThread(player, backup, RestoreReason.MANUAL_ARMOR_REMOVAL, false);
+			plugin.getLogger().info("PlantArmor activation recovery: restoring active/stale temp armor for " + playerId);
+			return restoreOnEntityThread(player, RestoreReason.STALE_BACKUP_RECOVERY, backup.sessionId());
 		}
 
 		if (hasAnyPlantArmor(player)) {
-			logAmbiguous(playerId, backup.sessionId(), RestoreReason.MANUAL_ARMOR_REMOVAL,
+			plugin.getLogger().warning("PlantArmor activation rejected: unresolved backup for " + playerId
+					+ " with foreign PlantArmor items present");
+			logAmbiguous(playerId, backup.sessionId(), RestoreReason.STALE_BACKUP_RECOVERY,
 					"unresolved backup during activation with foreign PlantArmor items");
 			return false;
 		}
 
-		return restoreFromBackupOnEntityThread(player, backup, RestoreReason.MANUAL_ARMOR_REMOVAL, false);
+		plugin.getLogger().info("PlantArmor activation recovery: restoring from unresolved backup for " + playerId);
+		return restoreOnEntityThread(player, RestoreReason.STALE_BACKUP_RECOVERY, backup.sessionId());
 	}
 
 	private int countSessionArmorPieces(Player player, String sessionId) {
@@ -519,13 +559,15 @@ public final class PlantArmorService {
 		return count;
 	}
 
-	private void stripSessionPlantArmorFromPlayer(Player player, String sessionId) {
+	private int stripSessionPlantArmorFromPlayer(Player player, String sessionId) {
+		int stripped = 0;
 		ItemStack[] armor = player.getInventory().getArmorContents();
 		boolean armorChanged = false;
 		for (int i = 0; i < armor.length; i++) {
 			if (PlantArmorItems.isPlantArmorForSession(plugin, armor[i], sessionId)) {
 				armor[i] = null;
 				armorChanged = true;
+				stripped++;
 			}
 		}
 		if (armorChanged) {
@@ -538,6 +580,7 @@ public final class PlantArmorService {
 			if (PlantArmorItems.isPlantArmorForSession(plugin, contents[i], sessionId)) {
 				contents[i] = null;
 				contentsChanged = true;
+				stripped++;
 			}
 		}
 		if (contentsChanged) {
@@ -546,14 +589,17 @@ public final class PlantArmorService {
 
 		if (PlantArmorItems.isPlantArmorForSession(plugin, player.getInventory().getItemInOffHand(), sessionId)) {
 			player.getInventory().setItemInOffHand(null);
+			stripped++;
 		}
 
 		if (player.getOpenInventory() != null) {
 			ItemStack cursor = player.getOpenInventory().getCursor();
 			if (PlantArmorItems.isPlantArmorForSession(plugin, cursor, sessionId)) {
 				player.getOpenInventory().setCursor(null);
+				stripped++;
 			}
 		}
+		return stripped;
 	}
 
 	private void bestEffortShutdownRestore(Player player) {
@@ -574,6 +620,14 @@ public final class PlantArmorService {
 			if (stack != null && PlantArmorItems.isPlantArmorItem(plugin, stack)) {
 				return true;
 			}
+		}
+		for (ItemStack stack : player.getInventory().getStorageContents()) {
+			if (stack != null && PlantArmorItems.isPlantArmorItem(plugin, stack)) {
+				return true;
+			}
+		}
+		if (PlantArmorItems.isPlantArmorItem(plugin, player.getInventory().getItemInOffHand())) {
+			return true;
 		}
 		return false;
 	}

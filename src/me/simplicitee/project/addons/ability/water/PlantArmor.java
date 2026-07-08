@@ -301,10 +301,14 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 	
 	@Override
 	public void remove() {
-		if (plantArmorSessionId != null) {
-			ProjectAddons.instance.getPlantArmorService().restore(player, restoreReason, plantArmorSessionId);
-			plantArmorSessionId = null;
+		String sessionId = plantArmorSessionId;
+		RestoreReason reason = restoreReason;
+		plantArmorSessionId = null;
+
+		if (sessionId != null || ProjectAddons.instance.getPlantArmorService().hasBackup(player.getUniqueId())) {
+			ProjectAddons.instance.getPlantArmorService().endPlantArmor(player, reason, sessionId);
 		}
+
 		restoreReason = RestoreReason.ABILITY_END;
 
 		super.remove();

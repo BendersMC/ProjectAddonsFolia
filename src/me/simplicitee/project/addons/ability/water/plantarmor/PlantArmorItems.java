@@ -21,19 +21,20 @@ public final class PlantArmorItems {
 		return new NamespacedKey(plugin, "plant_armor_session");
 	}
 
-	/** Tags {@code item} in place; caller must pass a dedicated temporary stack, not a live inventory reference. */
+	/**
+	 * Tags {@code item} in place; caller must pass a dedicated temporary stack, not a live inventory reference.
+	 * Real temporary armor is used for PlantArmor behavior. Packet-only fake armor is not implemented here
+	 * because restore correctness depends on disposable PDC-tagged physical temp pieces.
+	 */
 	public static void tagPlantArmor(Plugin plugin, ItemStack item, String sessionId) {
 		if (item == null) {
 			return;
 		}
-		ItemMeta meta = item.getItemMeta();
-		if (meta == null) {
-			return;
-		}
-		PersistentDataContainer pdc = meta.getPersistentDataContainer();
-		pdc.set(plantArmorKey(plugin), PersistentDataType.BYTE, PLANT_ARMOR_MARKER);
-		pdc.set(sessionKey(plugin), PersistentDataType.STRING, sessionId);
-		item.setItemMeta(meta);
+		item.editMeta(meta -> {
+			PersistentDataContainer pdc = meta.getPersistentDataContainer();
+			pdc.set(plantArmorKey(plugin), PersistentDataType.BYTE, PLANT_ARMOR_MARKER);
+			pdc.set(sessionKey(plugin), PersistentDataType.STRING, sessionId);
+		});
 	}
 
 	public static boolean isPlantArmorItem(Plugin plugin, ItemStack item) {
