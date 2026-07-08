@@ -10,6 +10,7 @@ import me.simplicitee.project.addons.ProjectAddons;
 import me.simplicitee.project.addons.Util;
 import me.simplicitee.project.addons.util.SoundEffect;
 import me.simplicitee.project.addons.util.versionadapter.PotionEffectAdapter;
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Sound;
@@ -20,7 +21,6 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
-import org.bukkit.scheduler.BukkitRunnable;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -138,13 +138,9 @@ public class Electrify extends LightningAbility implements AddonAbility {
 	public void remove() {
 		super.remove();
 
-		new BukkitRunnable() {
-
-			@Override
-			public void run() {
-				electrified.remove(block);
-			}
-		}.runTaskLater(ProjectAddons.instance, 80);
+		final Block electrifiedBlock = block;
+		Bukkit.getRegionScheduler().runDelayed(ProjectAddons.instance, electrifiedBlock.getLocation(), task ->
+				electrified.remove(electrifiedBlock), 80L);
 	}
 
 	@Override

@@ -1,7 +1,6 @@
 package me.simplicitee.project.addons.ability.earth;
 
 import com.projectkorra.projectkorra.GeneralMethods;
-import com.projectkorra.projectkorra.ProjectKorra;
 import com.projectkorra.projectkorra.ability.AddonAbility;
 import com.projectkorra.projectkorra.ability.SandAbility;
 import com.projectkorra.projectkorra.attribute.Attribute;
@@ -13,8 +12,8 @@ import org.bukkit.Material;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.BlockData;
+import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
-import org.bukkit.scheduler.BukkitRunnable;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -126,18 +125,16 @@ public class Crumble extends SandAbility implements AddonAbility {
 				m = Material.SANDSTONE;
 			}
 			
-			revert.put(block, block.getBlockData());
 			final Block b = block;
-			
-			new BukkitRunnable() {
+			final BlockData revertData = block.getBlockData();
+			revert.put(block, revertData);
 
-				@Override
-				public void run() {
-					b.setBlockData(revert.get(b));
+			Bukkit.getRegionScheduler().runDelayed(ProjectAddons.instance, b.getLocation(), task -> {
+				if (b.getWorld() != null) {
+					b.setBlockData(revertData);
 				}
-				
-			}.runTaskLater(ProjectKorra.plugin, 20 * revertTime);
-			
+			}, 20L * revertTime);
+
 			block.setType(m);
 		}
 		
