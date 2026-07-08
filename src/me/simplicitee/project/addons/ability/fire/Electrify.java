@@ -3,6 +3,7 @@ package me.simplicitee.project.addons.ability.fire;
 import com.projectkorra.projectkorra.BendingPlayer;
 import com.projectkorra.projectkorra.GeneralMethods;
 import com.projectkorra.projectkorra.ability.AddonAbility;
+import com.projectkorra.projectkorra.ability.ElementalAbility;
 import com.projectkorra.projectkorra.ability.LightningAbility;
 import com.projectkorra.projectkorra.attribute.Attribute;
 import com.projectkorra.projectkorra.util.DamageHandler;
@@ -12,7 +13,6 @@ import me.simplicitee.project.addons.util.SoundEffect;
 import me.simplicitee.project.addons.util.versionadapter.PotionEffectAdapter;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
-import org.bukkit.Material;
 import org.bukkit.Sound;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
@@ -57,7 +57,7 @@ public class Electrify extends LightningAbility implements AddonAbility {
 	public Electrify(Player player, Block block, boolean direct, int spread) {
 		super(player);
 
-		if (!ProjectAddons.instance.getConfig().getStringList("Properties.MetallicBlocks").contains(block.getType().toString()) && block.getType() != Material.WATER) {
+		if (!isElectrifiableBlock(block)) {
 			return;
 		} else if (electrified.contains(block)) {
 			return;
@@ -95,7 +95,7 @@ public class Electrify extends LightningAbility implements AddonAbility {
 			return;
 		}
 
-		if (!ProjectAddons.instance.getConfig().getStringList("Properties.MetallicBlocks").contains(block.getType().toString()) && block.getType() != Material.WATER) {
+		if (!isElectrifiableBlock(block)) {
 			remove();
 			return;
 		}
@@ -110,7 +110,7 @@ public class Electrify extends LightningAbility implements AddonAbility {
 
 		for (Entity e : GeneralMethods.getEntitiesAroundPoint(center, 1)) {
 			if (e instanceof LivingEntity) {
-				if (block.getType() == Material.WATER && e.getLocation().getBlock().equals(block)) {
+				if (isElectrifiedWater(block) && e.getLocation().getBlock().equals(block)) {
 					DamageHandler.damageEntity(e, waterdmg, this);
 				} else if (!e.getLocation().getBlock().equals(block.getRelative(BlockFace.UP))) {
 					continue;
@@ -197,5 +197,19 @@ public class Electrify extends LightningAbility implements AddonAbility {
 	@Override
 	public String getInstructions() {
 		return "Right click a block!";
+	}
+
+	private static boolean isElectrifiableBlock(Block block) {
+		if (block == null) {
+			return false;
+		}
+		if (ProjectAddons.instance.getConfig().getStringList("Properties.MetallicBlocks").contains(block.getType().toString())) {
+			return true;
+		}
+		return ElementalAbility.isWater(block);
+	}
+
+	private static boolean isElectrifiedWater(Block block) {
+		return block != null && ElementalAbility.isWater(block);
 	}
 }
