@@ -17,11 +17,14 @@ import com.projectkorra.projectkorra.util.MovementHandler;
 import com.projectkorra.projectkorra.util.TempBlock;
 import me.simplicitee.project.addons.ProjectAddons;
 import me.simplicitee.project.addons.Util;
+import me.simplicitee.project.addons.ability.water.plantarmor.PlantArmorItems;
+import me.simplicitee.project.addons.ability.water.plantarmor.PlantArmorSourceSample;
+import me.simplicitee.project.addons.ability.water.plantarmor.PlantArmorStyle;
+import me.simplicitee.project.addons.ability.water.plantarmor.PlantArmorStyleResolver;
 import me.simplicitee.project.addons.ability.water.plantarmor.RestoreReason;
 import me.simplicitee.project.addons.util.versionadapter.PotionEffectAdapter;
 import net.md_5.bungee.api.ChatColor;
 import org.bukkit.Bukkit;
-import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
@@ -33,7 +36,6 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.inventory.meta.LeatherArmorMeta;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.Vector;
@@ -67,7 +69,6 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 	private ArmorState state;
 	private ArmorAbility active;
 	private BossBar bar;
-	private ItemStack[] armors = new ItemStack[4];
 	private String plantArmorSessionId;
 	private RestoreReason restoreReason = RestoreReason.ABILITY_END;
 	private World origin;
@@ -81,6 +82,8 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 	@Attribute(Attribute.SELECT_RANGE)
 	private double selectRange;
 	private Set<TempBlock> sources = new HashSet<>();
+	private final List<PlantArmorSourceSample> sourceSamples = new ArrayList<>();
+	private int sourceSampleOrder;
 	
 	// vinewhip variables
 	@Attribute("VineWhip_Range")
@@ -154,11 +157,6 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 			this.speed = ProjectAddons.instance.getConfig().getInt("Abilities.Water.PlantArmor.Boost.Speed") - 1;
 			this.jump = ProjectAddons.instance.getConfig().getInt("Abilities.Water.PlantArmor.Boost.Jump") - 1;
 			
-			armors[0] = leafLeather(Material.LEATHER_BOOTS);
-			armors[1] = leafLeather(Material.LEATHER_LEGGINGS);
-			armors[2] = leafLeather(Material.LEATHER_CHESTPLATE);
-			armors[3] = new ItemStack(Material.OAK_LEAVES);
-			
 			this.state = ArmorState.FORMING;
 			this.active = null;
 			this.origin = player.getWorld();
@@ -201,12 +199,8 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 		}
 	}
 	
-	private ItemStack leafLeather(Material type) {
-		ItemStack leather = new ItemStack(type);
-		LeatherArmorMeta meta = (LeatherArmorMeta) leather.getItemMeta();
-		meta.setColor(Color.fromRGB(72 + (int) (24 * (Math.random() - 0.5)), 181 + (int) (24 * (Math.random() - 0.5)), 24));
-		leather.setItemMeta(meta);
-		return leather;
+	private void recordSourceSample(Block block) {
+		sourceSamples.add(new PlantArmorSourceSample(block.getType(), block.getBiome(), sourceSampleOrder++));
 	}
 
 	@Override
@@ -319,6 +313,7 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 		shield.forEach((tb) -> tb.revertBlock());
 		
 		this.sources.clear();
+		this.sourceSamples.clear();
 		this.shield.clear();
 		if (this.bar != null) {
 			this.bar.removeAll();
@@ -417,8 +412,13 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 	
 	private void progressForming() {
 		if (sources.size() == requiredPlants) {
+			PlantArmorStyle style = PlantArmorStyleResolver.resolve(sourceSamples);
+			ProjectAddons.instance.getLogger().info("PlantArmor style selected: " + style.styleName()
+					+ " dominant=" + style.dominantCategory()
+					+ " biome=" + (style.representativeBiome() == null ? "none" : style.representativeBiome().name()));
+			ItemStack[] temporaryArmor = PlantArmorItems.createTemporaryArmor(style);
 			// Backup is created only here, when temporary PlantArmor is actually equipped — not during forming alone.
-			ProjectAddons.instance.getPlantArmorService().beginActivation(player, armors, result -> {
+			ProjectAddons.instance.getPlantArmorService().beginActivation(player, temporaryArmor, result -> {
 				if (!result.success()) {
 					restoreReason = RestoreReason.CANCELLED;
 					remove();
@@ -464,6 +464,7 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 			return;
 		}
 		
+		recordSourceSample(b);
 		sources.add(new TempBlock(b, Material.AIR));
 	}
 	

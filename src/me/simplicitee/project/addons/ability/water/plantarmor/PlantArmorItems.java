@@ -1,8 +1,11 @@
 package me.simplicitee.project.addons.ability.water.plantarmor;
 
+import org.bukkit.Color;
+import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.inventory.meta.LeatherArmorMeta;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.Plugin;
@@ -59,6 +62,21 @@ public final class PlantArmorItems {
 		}
 		return item.getItemMeta().getPersistentDataContainer()
 				.get(sessionKey(plugin), PersistentDataType.STRING);
+	}
+
+	public static ItemStack[] createTemporaryArmor(PlantArmorStyle style) {
+		ItemStack[] armors = new ItemStack[4];
+		armors[0] = coloredLeather(Material.LEATHER_BOOTS, style.leatherColor());
+		armors[1] = coloredLeather(Material.LEATHER_LEGGINGS, style.leatherColor());
+		armors[2] = coloredLeather(Material.LEATHER_CHESTPLATE, style.leatherColor());
+		armors[3] = new ItemStack(style.helmetMaterial());
+		return armors;
+	}
+
+	private static ItemStack coloredLeather(Material type, Color color) {
+		ItemStack leather = new ItemStack(type);
+		leather.editMeta(LeatherArmorMeta.class, meta -> meta.setColor(color));
+		return leather;
 	}
 
 	public static void stripPlantArmorTag(Plugin plugin, ItemStack item) {
