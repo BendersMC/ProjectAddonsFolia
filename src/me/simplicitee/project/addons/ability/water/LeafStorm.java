@@ -10,6 +10,7 @@ import com.projectkorra.projectkorra.attribute.Attribute;
 import com.projectkorra.projectkorra.util.ClickType;
 import com.projectkorra.projectkorra.util.DamageHandler;
 import me.simplicitee.project.addons.ProjectAddons;
+import me.simplicitee.project.addons.Util;
 import org.bukkit.Location;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
@@ -99,7 +100,7 @@ public class LeafStorm extends PlantAbility implements ComboAbility, AddonAbilit
 				continue;
 			}
 			
-			GeneralMethods.displayColoredParticle("3D9970", leaf.getLocation(), 2, 0.2, 0.2, 0.2);
+			GeneralMethods.displayColoredParticle(Util.leafParticleColor(player), leaf.getLocation(), 2, 0.2, 0.2, 0.2);
 			
 			for (Entity e : GeneralMethods.getEntitiesAroundPoint(leaf.getLocation(), 0.5)) {
 				if (e instanceof LivingEntity && e.getEntityId() != player.getEntityId()) {

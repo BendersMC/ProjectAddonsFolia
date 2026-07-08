@@ -4,7 +4,7 @@ import com.projectkorra.projectkorra.ability.CoreAbility;
 import me.simplicitee.project.addons.ability.water.PlantArmor;
 import me.simplicitee.project.addons.util.SchedulerUtil;
 import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
+import org.bukkit.Color;
 import org.bukkit.entity.Player;
 import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.inventory.ItemStack;
@@ -13,6 +13,7 @@ import org.bukkit.plugin.Plugin;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -66,9 +67,10 @@ public final class PlantArmorService {
 		return backupStore.hasBackup(playerId);
 	}
 
-	public void beginActivation(Player player, ItemStack[] temporaryArmor, Consumer<ActivationResult> callback) {
+	public void beginActivation(Player player, ItemStack[] temporaryArmor, PlantArmorStyle style,
+			Consumer<ActivationResult> callback) {
 		SchedulerUtil.runForPlayer(plugin, player, () ->
-				callback.accept(beginActivationOnEntityThread(player, temporaryArmor)));
+				callback.accept(beginActivationOnEntityThread(player, temporaryArmor, style)));
 	}
 
 	public void restore(Player player, RestoreReason reason) {
@@ -89,6 +91,18 @@ public final class PlantArmorService {
 
 	public boolean hasActivePlantArmorState(UUID playerId) {
 		return sessions.contains(playerId) || backupStore.hasBackup(playerId);
+	}
+
+	public Optional<PlantArmorStyle> getActivePlantArmorStyle(UUID playerId) {
+		PlantArmorSession session = sessions.get(playerId);
+		if (session == null || session.style() == null) {
+			return Optional.empty();
+		}
+		return Optional.of(session.style());
+	}
+
+	public Optional<Color> getActivePlantArmorColor(UUID playerId) {
+		return getActivePlantArmorStyle(playerId).map(PlantArmorStyle::leatherColor);
 	}
 
 	public String resolveSessionId(UUID playerId) {
@@ -338,7 +352,7 @@ public final class PlantArmorService {
 	 * Called only when forming completes and temporary PlantArmor is about to be equipped.
 	 * No backup is created for bound abilities or forming-only state.
 	 */
-	ActivationResult beginActivationOnEntityThread(Player player, ItemStack[] temporaryArmor) {
+	ActivationResult beginActivationOnEntityThread(Player player, ItemStack[] temporaryArmor, PlantArmorStyle style) {
 		UUID playerId = player.getUniqueId();
 
 		if (sessions.contains(playerId)) {
@@ -364,7 +378,8 @@ public final class PlantArmorService {
 		long createdAt = System.currentTimeMillis();
 		ItemStack[] equip = PlantArmorSession.cloneArmor(temporaryArmor);
 		int expectedTaggedArmorCount = countNonNullItems(equip);
-		PlantArmorSession session = new PlantArmorSession(playerId, sessionId, originalArmor, createdAt, expectedTaggedArmorCount);
+		PlantArmorSession session = new PlantArmorSession(playerId, sessionId, originalArmor, createdAt,
+				expectedTaggedArmorCount, style);
 		if (sessions.putIfAbsent(playerId, session) != null) {
 			plugin.getLogger().warning("PlantArmor activation aborted: concurrent session registered for " + playerId);
 			backupStore.deleteBackup(playerId);
@@ -503,7 +518,7 @@ public final class PlantArmorService {
 				endPlantArmor(player, RestoreReason.MANUAL_ARMOR_REMOVAL, sessionId);
 			}
 
-			player.sendMessage(ChatColor.YELLOW + "PlantArmor ended because you removed the armor.");
+			player.sendMessage(org.bukkit.ChatColor.YELLOW + "PlantArmor ended because you removed the armor.");
 		} finally {
 			inProgress.set(false);
 			manualRemovalInProgress.remove(playerId, inProgress);

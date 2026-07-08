@@ -413,12 +413,12 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 	private void progressForming() {
 		if (sources.size() == requiredPlants) {
 			PlantArmorStyle style = PlantArmorStyleResolver.resolve(sourceSamples);
-			ProjectAddons.instance.getLogger().info("PlantArmor style selected: " + style.styleName()
+			ProjectAddons.instance.getLogger().fine("PlantArmor style selected: " + style.styleName()
 					+ " dominant=" + style.dominantCategory()
 					+ " biome=" + (style.representativeBiome() == null ? "none" : style.representativeBiome().name()));
 			ItemStack[] temporaryArmor = PlantArmorItems.createTemporaryArmor(style);
 			// Backup is created only here, when temporary PlantArmor is actually equipped — not during forming alone.
-			ProjectAddons.instance.getPlantArmorService().beginActivation(player, temporaryArmor, result -> {
+			ProjectAddons.instance.getPlantArmorService().beginActivation(player, temporaryArmor, style, result -> {
 				if (!result.success()) {
 					restoreReason = RestoreReason.CANCELLED;
 					remove();
@@ -452,7 +452,7 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 					
 					display.add(x, dy, z);
 					
-					GeneralMethods.displayColoredParticle(Util.LEAF_COLOR, display);
+					GeneralMethods.displayColoredParticle(leafParticleColor(), display);
 					
 					display.subtract(x, dy, z);
 				}
@@ -493,7 +493,7 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 					return;
 				}
 				
-				GeneralMethods.displayColoredParticle(Util.LEAF_COLOR, last, 1, 0.1, 0.1, 0.1);
+				GeneralMethods.displayColoredParticle(leafParticleColor(), last, 1, 0.1, 0.1, 0.1);
 				
 				for (Entity e : GeneralMethods.getEntitiesAroundPoint(last, 1)) {
 					if (e instanceof LivingEntity && e.getEntityId() != player.getEntityId()) {
@@ -536,7 +536,7 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 	private void addShieldBlock(Block block) {
 		if (isAir(block.getType()) || block.isPassable()) {
 			if (!TempBlock.isTempBlock(block)) {
-				shield.add(new TempBlock(block, Material.OAK_LEAVES));
+				shield.add(new TempBlock(block, resolveLeafStructureMaterial()));
 			}
 		}
 	}
@@ -566,7 +566,7 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 		for (int i = 0; i < 3; ++i) {
 			Vector ov = GeneralMethods.getOrthogonalVector(direction, (angle + (120 * i)), tRadius);
 			current.add(ov);
-			GeneralMethods.displayColoredParticle(Util.LEAF_COLOR, current);
+			GeneralMethods.displayColoredParticle(leafParticleColor(), current);
 			current.subtract(ov);
 		}
 		
@@ -583,7 +583,7 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 				
 				ground.add(x, i, z);
 				
-				GeneralMethods.displayColoredParticle(Util.LEAF_COLOR, ground);
+				GeneralMethods.displayColoredParticle(leafParticleColor(), ground);
 				
 				ground.subtract(x, i, z);
 			}
@@ -616,7 +616,7 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 		for (int i = 0; i < gRange; ++i) {
 			current.add(direction);
 			
-			GeneralMethods.displayColoredParticle(Util.LEAF_COLOR, current);
+			GeneralMethods.displayColoredParticle(leafParticleColor(), current);
 			
 			if (!current.getBlock().isPassable() && !pulling) {
 				if (current.distance(target) < 1) {
@@ -648,7 +648,7 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 		
 		for (Location loc : GeneralMethods.getCircle(player.getLocation(), dRadius, 0, true, true, 0)) {
 			if (loc.getBlock().isPassable() && !TempBlock.isTempBlock(loc.getBlock())) {
-				shield.add(new TempBlock(loc.getBlock(), Material.OAK_LEAVES));
+				shield.add(new TempBlock(loc.getBlock(), resolveLeafStructureMaterial()));
 			}
 		}
 		
@@ -696,6 +696,20 @@ public class PlantArmor extends PlantAbility implements AddonAbility, MultiAbili
 		return ProjectAddons.instance.getConfig().getInt("Abilities.Water.PlantArmor.SubAbilities." + ability + ".Cost");
 	}
 	
+	private String leafParticleColor() {
+		if (state == ArmorState.FORMED) {
+			return Util.leafParticleColor(player);
+		}
+		return Util.LEAF_COLOR;
+	}
+
+	private Material resolveLeafStructureMaterial() {
+		PlantArmorStyle activeStyle = ProjectAddons.instance.getPlantArmorService()
+				.getActivePlantArmorStyle(player.getUniqueId())
+				.orElse(null);
+		return PlantArmorStyleResolver.resolveLeafStructureMaterial(player.getLocation().getBlock().getBiome(), activeStyle);
+	}
+
 	private Block getRandomPlantSource() {
 		List<Block> blocks = GeneralMethods.getBlocksAroundPoint(player.getLocation(), selectRange);
 		Iterator<Block> iter = blocks.iterator();

@@ -124,7 +124,7 @@ public class RazorLeaf extends PlantAbility implements AddonAbility {
 				break;
 			}
 			
-			GeneralMethods.displayColoredParticle(Util.LEAF_COLOR, center.clone().add(r * Math.cos(Math.toRadians(phi)), 0, r * Math.sin(Math.toRadians(phi))));
+			GeneralMethods.displayColoredParticle(Util.leafParticleColor(player), center.clone().add(r * Math.cos(Math.toRadians(phi)), 0, r * Math.sin(Math.toRadians(phi))));
 		}
 		
 		for (Entity e : GeneralMethods.getEntitiesAroundPoint(center, radius + 1)) {

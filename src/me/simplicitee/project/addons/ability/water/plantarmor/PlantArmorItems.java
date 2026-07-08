@@ -3,6 +3,7 @@ package me.simplicitee.project.addons.ability.water.plantarmor;
 import org.bukkit.Color;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
+import org.bukkit.enchantments.Enchantment;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.meta.LeatherArmorMeta;
@@ -66,16 +67,21 @@ public final class PlantArmorItems {
 
 	public static ItemStack[] createTemporaryArmor(PlantArmorStyle style) {
 		ItemStack[] armors = new ItemStack[4];
-		armors[0] = coloredLeather(Material.LEATHER_BOOTS, style.leatherColor());
-		armors[1] = coloredLeather(Material.LEATHER_LEGGINGS, style.leatherColor());
-		armors[2] = coloredLeather(Material.LEATHER_CHESTPLATE, style.leatherColor());
+		armors[0] = coloredLeather(Material.LEATHER_BOOTS, style);
+		armors[1] = coloredLeather(Material.LEATHER_LEGGINGS, style);
+		armors[2] = coloredLeather(Material.LEATHER_CHESTPLATE, style);
 		armors[3] = new ItemStack(style.helmetMaterial());
 		return armors;
 	}
 
-	private static ItemStack coloredLeather(Material type, Color color) {
+	private static ItemStack coloredLeather(Material type, PlantArmorStyle style) {
 		ItemStack leather = new ItemStack(type);
-		leather.editMeta(LeatherArmorMeta.class, meta -> meta.setColor(color));
+		leather.editMeta(LeatherArmorMeta.class, meta -> {
+			meta.setColor(style.leatherColor());
+			if (style.thorns()) {
+				meta.addEnchant(Enchantment.THORNS, style.thornsLevel(), true);
+			}
+		});
 		return leather;
 	}
 

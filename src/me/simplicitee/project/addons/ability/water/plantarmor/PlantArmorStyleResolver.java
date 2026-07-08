@@ -19,20 +19,21 @@ public final class PlantArmorStyleResolver {
 		AZALEA_LEAVES(3),
 		PALE_MOSS(4),
 		MOSS(5),
-		MANGROVE_LEAVES(6),
-		SPRUCE_LEAVES(7),
-		BIRCH_LEAVES(8),
-		JUNGLE_LEAVES(9),
-		DARK_OAK_LEAVES(10),
-		ACACIA_LEAVES(11),
-		OAK_LEAVES(12),
-		VINE(13),
-		FERN(14),
-		GRASS(15),
-		WATER_PLANT(16),
-		BAMBOO_GROUP(17),
-		GENERAL_FOLIAGE(18),
-		DEFAULT(19);
+		CACTUS_GROUP(6),
+		MANGROVE_LEAVES(7),
+		SPRUCE_LEAVES(8),
+		BIRCH_LEAVES(9),
+		JUNGLE_LEAVES(10),
+		DARK_OAK_LEAVES(11),
+		ACACIA_LEAVES(12),
+		OAK_LEAVES(13),
+		VINE(14),
+		FERN(15),
+		GRASS(16),
+		WATER_PLANT(17),
+		BAMBOO_GROUP(18),
+		GENERAL_FOLIAGE(19),
+		DEFAULT(20);
 
 		private final int tiePriority;
 
@@ -79,11 +80,34 @@ public final class PlantArmorStyleResolver {
 		}
 
 		Biome representativeBiome = pickRepresentativeBiome(dominant, biomeCounts, earliestBiome, samples);
-		Material helmet = resolveHelmet(dominant, dominantMaterial);
+		Material helmet = resolveHelmet(dominant);
+		Material structure = resolveStructureMaterial(dominant);
 		Color leather = resolveLeatherColor(dominant, dominantMaterial, representativeBiome);
+		boolean thorns = dominant == SourceCategory.CACTUS_GROUP;
 		String styleName = dominant.name().toLowerCase(Locale.ROOT);
 
-		return new PlantArmorStyle(helmet, leather, styleName, dominant.name(), representativeBiome);
+		return new PlantArmorStyle(helmet, structure, leather, styleName, dominant.name(), representativeBiome,
+				thorns, thorns ? 2 : 0);
+	}
+
+	public static boolean isDryDeadPlantBiome(Biome biome) {
+		if (biome == null) {
+			return false;
+		}
+		String name = biome.name();
+		return name.contains("DESERT")
+				|| name.contains("BADLANDS")
+				|| name.contains("SAVANNA");
+	}
+
+	public static Material resolveLeafStructureMaterial(Biome biome, PlantArmorStyle activeStyle) {
+		if (activeStyle != null) {
+			return activeStyle.structureMaterial();
+		}
+		if (isDryDeadPlantBiome(biome)) {
+			return PlantArmorMaterials.mangroveRoots();
+		}
+		return Material.OAK_LEAVES;
 	}
 
 	private static SourceCategory pickDominantCategory(Map<SourceCategory, Integer> counts,
@@ -166,12 +190,13 @@ public final class PlantArmorStyleResolver {
 			case DARK_OAK_LEAVES -> SourceCategory.DARK_OAK_LEAVES;
 			case ACACIA_LEAVES -> SourceCategory.ACACIA_LEAVES;
 			case OAK_LEAVES -> SourceCategory.OAK_LEAVES;
+			case CACTUS, CACTUS_FLOWER -> SourceCategory.CACTUS_GROUP;
 			case VINE, GLOW_LICHEN, TWISTING_VINES, TWISTING_VINES_PLANT, WEEPING_VINES, WEEPING_VINES_PLANT,
 					CAVE_VINES, CAVE_VINES_PLANT -> SourceCategory.VINE;
 			case FERN, LARGE_FERN -> SourceCategory.FERN;
 			case SHORT_GRASS, TALL_GRASS, GRASS_BLOCK -> SourceCategory.GRASS;
 			case KELP, KELP_PLANT, SEAGRASS, TALL_SEAGRASS -> SourceCategory.WATER_PLANT;
-			case BAMBOO, BAMBOO_SAPLING, SUGAR_CANE, CACTUS, CACTUS_FLOWER -> SourceCategory.BAMBOO_GROUP;
+			case BAMBOO, BAMBOO_SAPLING, SUGAR_CANE -> SourceCategory.BAMBOO_GROUP;
 			default -> classifyByName(material.name());
 		};
 	}
@@ -182,6 +207,9 @@ public final class PlantArmorStyleResolver {
 		}
 		if (name.contains("MOSS")) {
 			return SourceCategory.MOSS;
+		}
+		if (name.contains("CACTUS")) {
+			return SourceCategory.CACTUS_GROUP;
 		}
 		if (name.endsWith("_LEAVES")) {
 			return SourceCategory.GENERAL_FOLIAGE;
@@ -198,16 +226,16 @@ public final class PlantArmorStyleResolver {
 		if (name.contains("KELP") || name.contains("SEAGRASS")) {
 			return SourceCategory.WATER_PLANT;
 		}
-		if (name.contains("BAMBOO") || name.contains("SUGAR_CANE") || name.contains("CACTUS")) {
+		if (name.contains("BAMBOO") || name.contains("SUGAR_CANE")) {
 			return SourceCategory.BAMBOO_GROUP;
 		}
 		return SourceCategory.GENERAL_FOLIAGE;
 	}
 
-	private static Material resolveHelmet(SourceCategory category, Material dominantMaterial) {
+	private static Material resolveHelmet(SourceCategory category) {
 		return switch (category) {
 			case CHERRY_LEAVES -> Material.CHERRY_LEAVES;
-			case PALE_OAK_LEAVES -> Material.PALE_OAK_LEAVES;
+			case PALE_OAK_LEAVES, PALE_MOSS -> PlantArmorMaterials.paleOakLeaves();
 			case FLOWERING_AZALEA_LEAVES -> Material.FLOWERING_AZALEA_LEAVES;
 			case AZALEA_LEAVES -> Material.AZALEA_LEAVES;
 			case MANGROVE_LEAVES -> Material.MANGROVE_LEAVES;
@@ -218,7 +246,29 @@ public final class PlantArmorStyleResolver {
 			case ACACIA_LEAVES -> Material.ACACIA_LEAVES;
 			case OAK_LEAVES -> Material.OAK_LEAVES;
 			case MOSS -> Material.MOSS_BLOCK;
-			case PALE_MOSS -> Material.PALE_MOSS_BLOCK;
+			case CACTUS_GROUP -> PlantArmorMaterials.firstAvailable(
+					PlantArmorMaterials.cactusFlower(),
+					PlantArmorMaterials.cactus(),
+					Material.OAK_LEAVES);
+			default -> Material.OAK_LEAVES;
+		};
+	}
+
+	private static Material resolveStructureMaterial(SourceCategory category) {
+		return switch (category) {
+			case CHERRY_LEAVES -> Material.CHERRY_LEAVES;
+			case PALE_OAK_LEAVES, PALE_MOSS -> PlantArmorMaterials.paleOakLeaves();
+			case FLOWERING_AZALEA_LEAVES -> Material.FLOWERING_AZALEA_LEAVES;
+			case AZALEA_LEAVES -> Material.AZALEA_LEAVES;
+			case MANGROVE_LEAVES -> Material.MANGROVE_LEAVES;
+			case SPRUCE_LEAVES -> Material.SPRUCE_LEAVES;
+			case BIRCH_LEAVES -> Material.BIRCH_LEAVES;
+			case JUNGLE_LEAVES -> Material.JUNGLE_LEAVES;
+			case DARK_OAK_LEAVES -> Material.DARK_OAK_LEAVES;
+			case ACACIA_LEAVES -> Material.ACACIA_LEAVES;
+			case OAK_LEAVES -> Material.OAK_LEAVES;
+			case MOSS -> Material.MOSS_BLOCK;
+			case CACTUS_GROUP -> PlantArmorMaterials.mangroveRoots();
 			default -> Material.OAK_LEAVES;
 		};
 	}
@@ -258,6 +308,7 @@ public final class PlantArmorStyleResolver {
 			case MOSS -> hex("#5E8F3D");
 			case PALE_MOSS -> hex("#D8D2BE");
 			case FERN -> hex("#6FAE42");
+			case CACTUS_GROUP -> hex("#588A3B");
 			default -> null;
 		};
 	}
@@ -294,9 +345,6 @@ public final class PlantArmorStyleResolver {
 		String name = material.name();
 		if (name.contains("SUGAR_CANE")) {
 			return hex("#A4C75A");
-		}
-		if (name.contains("CACTUS")) {
-			return hex("#588A3B");
 		}
 		return hex("#7BAF3A");
 	}
@@ -380,7 +428,8 @@ public final class PlantArmorStyleResolver {
 	}
 
 	private static PlantArmorStyle defaultStyle(Biome biome) {
-		return new PlantArmorStyle(Material.OAK_LEAVES, biomeTint(biome), "default", SourceCategory.DEFAULT.name(), biome);
+		return new PlantArmorStyle(Material.OAK_LEAVES, Material.OAK_LEAVES, biomeTint(biome), "default",
+				SourceCategory.DEFAULT.name(), biome, false, 0);
 	}
 
 	private static boolean biomeNameEquals(Biome biome, String expected) {
